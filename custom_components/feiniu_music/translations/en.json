@@ -1,0 +1,42 @@
+{
+  "title": "FeiNiu Music",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect FeiNiu Music",
+        "description": "Connect the official music service using a regular music account. No NAS administrator account is needed. Use the server root or /music/ URL.",
+        "data": {
+          "url": "Music service URL",
+          "username": "Music username",
+          "password": "Music password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update music password",
+        "description": "Enter the password for the existing music account. Leave blank to keep the saved password. To change server or username, remove this source and add it again.",
+        "data": {
+          "password": "Music password"
+        }
+      },
+      "reconfigure": {
+        "title": "Update music password",
+        "description": "The server and username are fixed for this source. Leave blank to keep the saved password. To change server or username, remove this source and add it again.",
+        "data": {
+          "password": "Music password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The music account could not log in.",
+      "cannot_connect": "Could not connect to the music service.",
+      "invalid_input": "Enter a valid music URL, username and password.",
+      "invalid_response": "The music service returned an unexpected response."
+    },
+    "abort": {
+      "already_configured": "This server and music account are already configured.",
+      "identity_change": "To change server or music account, remove the old source and add it again. You can update the password for this source.",
+      "reauth_successful": "Music password updated.",
+      "reconfigure_successful": "Music password updated."
+    }
+  }
+}

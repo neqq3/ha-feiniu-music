@@ -1,0 +1,42 @@
+{
+  "title": "飞牛音乐",
+  "config": {
+    "step": {
+      "user": {
+        "title": "连接飞牛音乐",
+        "description": "使用普通音乐账号连接官方音乐服务，无需 NAS 管理员账号。地址填写服务根地址或 /music/ 入口。",
+        "data": {
+          "url": "音乐服务地址",
+          "username": "音乐用户名",
+          "password": "音乐密码"
+        }
+      },
+      "reauth_confirm": {
+        "title": "更新音乐密码",
+        "description": "输入现有音乐账号的密码；留空保留已保存密码。更换服务器或音乐账号，请移除旧来源后重新添加。",
+        "data": {
+          "password": "音乐密码"
+        }
+      },
+      "reconfigure": {
+        "title": "更新音乐密码",
+        "description": "当前来源的服务器与用户名固定。密码留空保留原值。更换服务器或音乐账号，请移除旧来源后重新添加。",
+        "data": {
+          "password": "音乐密码"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "音乐账号登录失败。",
+      "cannot_connect": "无法连接音乐服务。",
+      "invalid_input": "请填写有效的音乐地址、用户名和密码。",
+      "invalid_response": "音乐服务返回了非预期响应。"
+    },
+    "abort": {
+      "already_configured": "该服务器及音乐账号已配置。",
+      "identity_change": "更换服务器或音乐账号，请移除旧来源后重新添加；当前来源可以直接更新密码。",
+      "reauth_successful": "音乐密码已更新。",
+      "reconfigure_successful": "音乐密码已更新。"
+    }
+  }
+}

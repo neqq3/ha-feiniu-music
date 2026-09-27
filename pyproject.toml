@@ -1,0 +1,23 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "--strict-markers -q"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.14"
+follow_imports = "silent"
+check_untyped_defs = true
+warn_unused_ignores = true
+files = ["custom_components/feiniu_music"]
+
+[[tool.mypy.overrides]]
+module = ["voluptuous", "voluptuous.*"]
+ignore_missing_imports = true

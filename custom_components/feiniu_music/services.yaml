@@ -1,0 +1,16 @@
+get_lyrics:
+  name: Get lyrics
+  description: Read plain text and timestamped lyric lines for an accessible track.
+  fields:
+    entry_id:
+      name: Music source
+      required: true
+      selector:
+        config_entry:
+          integration: feiniu_music
+    track_id:
+      name: Track ID
+      description: Native track identifier, as shown in the media source item ID.
+      required: true
+      selector:
+        text:
