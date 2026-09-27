@@ -1,4 +1,105 @@
-# Local verification — 2026-09-27
+# Verification — complete experience candidate 0.2.0
+
+## Current candidate checks (2026-09-28, local only)
+
+Environment: isolated official HA Core 2026.9.4 container, Python 3.14.6,
+pytest-homeassistant-custom-component 0.13.367; no dependency upgrade. Tests run in a
+separate candidate directory, without real NAS credentials or speaker control.
+
+| Check | Actual result |
+| --- | --- |
+| `python -m pytest tests -o addopts=--strict-markers -q --timeout=30` | 275 passed |
+| `ruff check custom_components tests` | Passed |
+| `ruff format --check custom_components tests` | 40 files already formatted |
+| `MYPYPATH=/usr/src/homeassistant mypy custom_components/feiniu_music` | 22 source files, no issues |
+| `node --test frontend/card.test.js` | 4 passed |
+| `node frontend/build.mjs` | Bundled file generated, no runtime imports |
+| `node frontend/browser-check.mjs` | Passed; two cards, queue/actions, safe text, lyrics race, hidden page, 360/390/430/1100 px, light/dark |
+
+The browser harness uses Playwright 1.62.1 and installed Edge (`CARD_BROWSER_CHANNEL=msedge`).
+It serves only a temporary loopback page with synthetic HA messages and closes its browser/server.
+It does not inspect a user's browser profile. Install the listed dev dependency or reuse an existing
+Playwright runtime; screenshots under `artifacts/card-preview` are intentionally untracked.
+
+New HA-fixture tests exercise platform setup/options, standard services, state events, real
+HA Store and authenticated WebSocket handlers. They cover independent fixed outputs, registry
+renames/offline retention, incremental options, old unique-ID migration, permission checks,
+reload without autoplay, queue revision/occurrence editing, cross-account leases, cancellation,
+conservative startup/end evidence, sparse anchors, seek confirmation and late lyrics.
+Loopback HTTP tests check simultaneous streams and stopping just one, HEAD/Range/206/416,
+revocation, bounded authentication, JSON/HTML errors and response release. They use synthetic
+bytes and do not claim codec decoding. DLNA's cached-PLAYING early return is reproduced in
+an isolated reference test, not patched in HA core.
+
+A real test-HA check exposed an enqueue bug: adding a track selected from a list appended its
+entire browse context. The new regression requires only the chosen occurrence for `add`/`next`,
+while play/replace retains list context. The first simulated-end probe also failed because its
+research-only output timer was not marked as an HA callback; a second probe stopped waiting
+as soon as the queue ID changed, before the next load completed. These failed attempts are
+retained in local research; neither is reported as a successful playback check.
+
+## Current isolated HA deployment
+
+The candidate was installed into the already-authorized standalone HA, after a private backup
+of the old integration, configuration, relevant config-entry/entity-registry/Lovelace storage and
+existing FeiNiu queue files. Thirty deployed integration files match the candidate hashes. All
+three original account data dictionaries (including saved credentials and device IDs) and the
+three old entity IDs/unique IDs were retained; entries migrated to version 2. The account with
+an explicit saved output retained that binding. Accounts without one were not assigned a real
+speaker automatically; their old unused entities may remain unavailable until the user manages
+those registry entries. Two new silent simulated outputs were explicitly selected only for the
+test music account. No real speaker command was sent.
+
+Through real HA WebSocket/REST APIs and the official music service:
+
+- Browse returned 164 visible tracks for this test account. It has zero playlists; populated
+  playlist tests remain offline and the earlier separate account's live record remains historical.
+- Adding three individual browsed songs produced three queue occurrences per output and no
+  play commands. Explicit Play created separate rounds with first-byte and matching HA-state evidence.
+- Pause/resume, seek feedback, shuffle/repeat controls, manual next/previous and independent
+  session state worked. The simulated transport's natural end advanced exactly once.
+- Reloading this account preserved both three-item queues/current occurrences, without any new
+  output command or ownership claim. Explicit resume created a new round.
+- Lyrics returned 668 text characters and 47 synchronized lines. The real HA page rendered cover,
+  metadata, queue rows and lyrics. Browsing and playback controls on other real outputs were untouched.
+- Each simulated playback round fetched only 4 KiB into memory. Its reported position/end is a
+  simulated transport clock using track duration, not decoding, physical sound or listening evidence.
+
+Real HA masonry revealed a card lifecycle bug that the initial flat harness missed: detach/reinsert
+while the first request was pending could leave Loading visible. The card now invalidates and
+reissues that read on reconnect; a browser regression reproduces this timing, and the deployed
+page was rechecked with both queues visible. Metadata-derived button names are text-only and
+now match their visible row labels. Recent filtered FeiNiu/WebSocket error-header count was zero.
+
+The simulator and live probes are local research tools and are excluded from the integration,
+commit and installation package. The test HA has a dedicated dashboard; original dashboards
+were not overwritten. Actual device startup quirks remain unverified on this complete candidate.
+
+## Reproduction commands
+
+```sh
+python -m pytest tests -o addopts=--strict-markers -q --timeout=30
+ruff check custom_components tests
+ruff format --check custom_components tests
+MYPYPATH=/path/to/homeassistant/source mypy custom_components/feiniu_music
+node frontend/build.mjs
+node --test frontend/card.test.js
+# Requires Playwright and an installed supported browser:
+CARD_BROWSER_CHANNEL=msedge node frontend/browser-check.mjs
+git diff --check
+```
+
+Only the integration suite is claimed, not the entire Home Assistant or MA test suite.
+The optional card is original local code with self-contained SVG controls and no CDN dependency.
+No production HA/MA, NAS permissions or music files were changed. Physical playback and listening
+were not repeated for 0.2.0; previous device observations below remain historical evidence only.
+
+## Earlier versions: preserved evidence
+
+The following entries describe prior revisions. Their old selectable-output/in-memory-queue
+limitations are superseded by 0.2.0; their live playback results were not repeated on this candidate.
+
+### Initial verification — 2026-09-27
 
 This is an experimental local candidate. It has not been published, submitted to HACS,
 reviewed by Home Assistant, or tested against the entire HA test suite.

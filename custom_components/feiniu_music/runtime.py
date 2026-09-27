@@ -29,6 +29,8 @@ from .client import (
     ProtocolError,
 )
 from .const import CONF_ACCOUNT_ID, CONF_DEVICE_ID, PAGE_SIZE
+from .lyrics import parse_lyrics
+from .streaming import AudioRound
 
 ARTWORK_LIFETIME = 2 * 60 * 60
 MAX_ARTWORK_GRANTS = 128
@@ -110,6 +112,23 @@ class FeiNiuRuntime:
         self._thumbnail_paths: dict[tuple[str | None, str], tuple[float, str]] = {}
         self._artwork_grants: dict[str, tuple[float, str, str, str]] = {}
         self._active: set[asyncio.Task] = set()
+        self.audio_rounds: dict[str, AudioRound] = {}
+        self._lyrics: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def grant_audio(self, route: AudioRound) -> str:
+        """Keep only the current playback round per selected output."""
+        self.check_open()
+        self.cancel_audio(route.owner)
+        token = secrets.token_hex(12)
+        self.audio_rounds[token] = route
+        return token
+
+    def cancel_audio(self, owner: str) -> None:
+        """Stopping one output must not cancel another output of the same account."""
+        for token, route in list(self.audio_rounds.items()):
+            if route.owner == owner:
+                route.close()
+                del self.audio_rounds[token]
 
     async def login(self) -> None:
         """Validate the same music identity configured in this entry."""
@@ -122,6 +141,7 @@ class FeiNiuRuntime:
             raise AuthenticationError("Music account identity changed; add a new source")
         self.generation += 1
         self._details.clear()
+        self._lyrics.clear()
         self._covers.clear()
         self._browse_results.clear()
         self._thumbnail_paths.clear()
@@ -309,6 +329,25 @@ class FeiNiuRuntime:
         # None of these rows substitutes for fresh playback metadata.
         return owner
 
+    async def display_track(self, guid: str) -> dict[str, Any]:
+        """Reuse fresh scoped browse rows for display, never as playback authorization."""
+        self.check_open()
+        row = self._cover_owner("track", guid)
+        return deepcopy(row) if row is not None else await self.detail("track", guid)
+
+    async def lyrics(self, guid: str) -> dict[str, Any]:
+        """Lyrics are optional display data, guarded by the existing detail lifetime."""
+        async with self.activity():
+            await self.detail("track", guid)
+            now = monotonic()
+            if (cached := self._lyrics.get(guid)) and now - cached[0] < 300:
+                return deepcopy(cached[1])
+            result = parse_lyrics(await self.call(lambda: self.client.lyrics(guid)))
+            if len(self._lyrics) >= 32:
+                self._lyrics.pop(next(iter(self._lyrics)))
+            self._lyrics[guid] = (now, deepcopy(result))
+            return result
+
     async def cover(self, kind: str, guid: str, cover: str) -> bytes:
         """A currently accessible owner cannot authorize an unrelated cover identifier."""
         # Limit image traffic entering the client's shared request queue, so navigating
@@ -425,7 +464,11 @@ class FeiNiuRuntime:
     async def close(self) -> None:
         """Invalidate cached media and close all streams belonging to this entry."""
         self.closed = True
+        for route in self.audio_rounds.values():
+            route.close()
+        self.audio_rounds.clear()
         self._details.clear()
+        self._lyrics.clear()
         self._covers.clear()
         self._browse_results.clear()
         self._thumbnail_paths.clear()

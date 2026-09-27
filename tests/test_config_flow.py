@@ -33,6 +33,8 @@ async def test_initial_failure_can_change_identity_and_password_is_not_echoed(ha
             result["flow_id"],
             {"url": "http://right.invalid/music/", "username": "right", "password": "replacement"},
         )
+        assert result["step_id"] == "outputs"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"outputs": []})
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["data"]["url"] == "http://right.invalid/music/"
         assert result["data"]["device_id"] == device

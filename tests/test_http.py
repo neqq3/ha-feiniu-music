@@ -23,6 +23,7 @@ from custom_components.feiniu_music.http import (
     FeiNiuArtworkView,
     FeiNiuAudioView,
     FeiNiuImageView,
+    FeiNiuSessionAudioView,
     image_response,
 )
 from custom_components.feiniu_music.media_source import FeiNiuMediaSource
@@ -56,6 +57,23 @@ async def delivery(hass, runtime, aiohttp_server, hass_client_no_auth):
             headers["Content-Range"] = f"bytes {start}-{end}/{len(AUDIO)}"
         if status == 302:
             headers["Location"] = behavior["location"]
+        if controls := behavior.get("streaming"):
+            index = len(calls) - 1
+            response = web.StreamResponse(
+                status=status, headers={**headers, "Content-Length": str(len(payload))}
+            )
+            await response.prepare(request)
+            try:
+                await response.write(payload[:4096])
+                controls["started"][index].set()
+                await controls["release"][index].wait()
+                await response.write(payload[4096:])
+                await response.write_eof()
+            except ConnectionResetError:
+                pass
+            finally:
+                controls["finished"][index].set()
+            return response
         return web.Response(status=status, body=payload, headers=headers)
 
     app = web.Application()
@@ -71,6 +89,7 @@ async def delivery(hass, runtime, aiohttp_server, hass_client_no_auth):
     runtime.client = client
     assert await async_setup_component(hass, "http", {})
     hass.http.register_view(FeiNiuAudioView(hass))
+    hass.http.register_view(FeiNiuSessionAudioView(hass))
     hass.http.register_view(FeiNiuImageView(hass))
     hass.http.register_view(FeiNiuArtworkView(hass))
     browser = await hass_client_no_auth()
@@ -349,3 +368,86 @@ async def test_disconnected_image_request_cancels_unneeded_download(
             await request
         await asyncio.wait_for(handler_done.wait(), timeout=2)
     assert cleaned.is_set() and not runtime._cover_tasks and not runtime._cover_waiters
+
+
+def session_path(runtime, owner, events):
+    from custom_components.feiniu_music.streaming import AudioRound
+
+    route = AudioRound(owner, "track-one", 1, lambda round_id, event: events.append((owner, event)))
+    token = runtime.grant_audio(route)
+    path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/{runtime.scope}/session/{token}/track-one"
+    return route, path, async_sign_path(runtime.hass, path, timedelta(minutes=10))
+
+
+async def test_output_round_head_get_range_expiry_and_revocation_are_independent(delivery, runtime):
+    browser, _, _, calls, _ = delivery
+    events = []
+    a, raw_a, url_a = session_path(runtime, "a", events)
+    b, _, url_b = session_path(runtime, "b", events)
+    assert (await browser.get(raw_a)).status == 401
+    head = await browser.head(url_a)
+    assert head.status == 200 and await head.read() == b""
+    assert events == [("a", "head")]
+    partial = await browser.get(url_a, headers={"Range": "bytes=100000-106553"})
+    assert partial.status == 206 and await partial.read() == AUDIO[100000:106554]
+    assert ("a", "first_byte") in events and ("a", "eof") in events
+    response = await browser.get(url_b, headers={"Range": "bytes=9999999-"})
+    assert response.status == 416 and response.headers["Content-Range"] == f"bytes */{len(AUDIO)}"
+    runtime.cancel_audio("a")
+    count = len(calls)
+    assert (await browser.get(url_a)).status == 404 and len(calls) == count
+    response = await browser.get(url_b)
+    assert response.status == 200 and await response.read() == AUDIO
+    b.expires = 0
+    assert (await browser.get(url_b)).status == 404
+    assert a.closed and not a.tasks and not b.tasks
+
+
+async def test_two_active_deliveries_cancel_only_the_stopped_output(hass, delivery, runtime):
+    browser, _, _, _, behavior = delivery
+    controls = {
+        name: [asyncio.Event(), asyncio.Event()] for name in ("started", "release", "finished")
+    }
+    behavior["streaming"] = controls
+    events = []
+    a, _, url_a = session_path(runtime, "a", events)
+    b, _, url_b = session_path(runtime, "b", events)
+    first = await browser.get(url_a)
+    assert await first.content.readexactly(4096) == AUDIO[:4096]
+    second = await browser.get(url_b)
+    assert await second.content.readexactly(4096) == AUDIO[:4096]
+    assert len(a.tasks) == len(b.tasks) == 1
+    closed_tasks = tuple(a.tasks)
+    runtime.cancel_audio("a")
+    await asyncio.gather(*closed_tasks, return_exceptions=True)
+    assert not a.tasks and len(b.tasks) == 1 and not b.closed
+    controls["release"][1].set()
+    assert await second.read() == AUDIO[4096:]
+    assert ("b", "eof") in events and ("a", "eof") not in events
+    first.close()
+    controls["release"][0].set()
+    await asyncio.gather(*(event.wait() for event in controls["finished"]))
+    assert not runtime._active and not runtime.client._session.connector._acquired
+
+
+@pytest.mark.parametrize(
+    "status,body,mime",
+    [
+        (401, b"Denied", "text/plain"),
+        (403, b"Denied", "text/plain"),
+        (200, b'{"code":100004}', "application/json"),
+        (200, b"<html>Denied</html>", "text/html"),
+    ],
+)
+async def test_session_audio_failure_never_reports_first_byte_or_eof(
+    delivery, runtime, status, body, mime
+):
+    browser, _, _, _, behavior = delivery
+    behavior.update(status=status, body=body, type=mime)
+    events = []
+    route, _, url = session_path(runtime, "a", events)
+    response = await browser.get(url)
+    assert response.status >= 400
+    assert events == [("a", "get"), ("a", "error")]
+    assert not route.tasks
+    assert runtime.client.login.await_count <= 1

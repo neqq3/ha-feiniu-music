@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test frontend/*.test.js",
+    "build": "node frontend/build.mjs",
+    "test:browser": "node frontend/browser-check.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

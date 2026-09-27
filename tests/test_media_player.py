@@ -1,7 +1,7 @@
 """Exercise queues against real HA entity services and state events, without a NAS."""
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from homeassistant.components.media_player import (
@@ -23,6 +23,10 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.feiniu_music.const import DOMAIN
 from custom_components.feiniu_music.media_player import FeiNiuPlayer
+from custom_components.feiniu_music.output import OutputBinding, OutputLeases
+from custom_components.feiniu_music.queue import QueueModel
+from custom_components.feiniu_music.session import OutputProfile
+from custom_components.feiniu_music.storage import SavedSession
 
 from .conftest import track
 
@@ -108,10 +112,15 @@ async def player(hass, runtime, client):
     client.related.return_value = {"list": [track("one"), track("two"), track("three")], "total": 3}
     client.page.return_value = client.related.return_value
     speaker = TestOutput()
-    controller = FeiNiuPlayer(runtime)
+    await hass.data[DATA_COMPONENT].async_add_entities([speaker])
+    saved = SavedSession(
+        OutputBinding.from_entity(hass, speaker.entity_id),
+        QueueModel(),
+        OutputProfile(confirmation="reported"),
+    )
+    controller = FeiNiuPlayer(runtime, saved, OutputLeases(), Mock())
     controller.entity_id = "media_player.feiniu_test"
-    await hass.data[DATA_COMPONENT].async_add_entities([speaker, controller])
-    await controller.async_select_source(controller.source_list[0])
+    await hass.data[DATA_COMPONENT].async_add_entities([controller])
     await hass.async_block_till_done()
     yield controller, speaker
     await controller.async_remove()
@@ -269,7 +278,7 @@ async def test_shuffle_preserves_current_and_duplicate_members_and_can_restore_o
     }
     await controller.async_play_media("playlist", uri(runtime, "playlist/list-one"))
     with patch(
-        "custom_components.feiniu_music.media_player.random.shuffle",
+        "custom_components.feiniu_music.queue.random.shuffle",
         side_effect=lambda values: values.reverse(),
     ):
         await controller.async_set_shuffle(True)
@@ -277,7 +286,13 @@ async def test_shuffle_preserves_current_and_duplicate_members_and_can_restore_o
     await controller.async_media_next_track()
     assert played_ids(speaker)[-1] == "three"
     await controller.async_set_shuffle(False)
-    assert controller.extra_state_attributes["queue_position"] == 4
+    assert controller.extra_state_attributes["queue_position"] == 2
+    assert [controller.saved.queue.items[key].track_id for key in controller.saved.queue.order] == [
+        "one",
+        "three",
+        "two",
+        "one",
+    ]
     await controller.async_media_previous_track()
     assert played_ids(speaker)[-1] == "one"
     assert controller.extra_state_attributes["queue_length"] == 4
@@ -306,7 +321,7 @@ async def test_next_rechecks_permission_and_stops_on_denial(hass, player, runtim
     client.detail.return_value = {"track": track("two", accessStatus=2)}
     await finish(hass, speaker)
     assert played_ids(speaker) == ["one"]
-    assert controller.extra_state_attributes["last_queue_error"] == "playback_failed"
+    assert controller.extra_state_attributes["last_queue_error"] == "PermissionDeniedError"
     assert not controller.extra_state_attributes["queue_active"]
     client.login.assert_not_called()
 
@@ -320,22 +335,26 @@ async def test_other_account_urls_rejected_before_fetch(player, runtime, client)
     client.related.assert_not_called()
 
 
-async def test_concurrent_next_is_serialized(player, runtime):
+async def test_concurrent_next_preserves_two_intents_but_can_cancel_middle_load(player, runtime):
     controller, speaker = player
     await controller.async_play_media("album", uri(runtime))
     await asyncio.gather(controller.async_media_next_track(), controller.async_media_next_track())
-    assert played_ids(speaker) == ["one", "two", "three"]
+    assert played_ids(speaker) in (["one", "three"], ["one", "two", "three"])
+    assert controller.saved.queue.current.track_id == "three"
 
 
-async def test_select_output_persists_without_taking_over_and_excludes_queue_entities(
-    player, runtime
-):
+async def test_fixed_output_does_not_offer_runtime_source_switching(hass, player, runtime):
     controller, speaker = player
-    assert len(controller.source_list) == 1
-    assert runtime.entry.options["output_player"] == speaker.entity_id
+    assert controller.output.entity_id == speaker.entity_id
+    assert not controller.supported_features & Feature.SELECT_SOURCE
     assert speaker.calls == []
     with pytest.raises(HomeAssistantError):
-        await controller.async_select_source(controller.entity_id)
+        await hass.services.async_call(
+            "media_player",
+            "select_source",
+            {"entity_id": controller.entity_id, "source": speaker.entity_id},
+            blocking=True,
+        )
 
 
 async def test_unload_detaches_end_listener(hass, player, runtime):
@@ -347,7 +366,13 @@ async def test_unload_detaches_end_listener(hass, player, runtime):
 
 
 async def test_real_entry_setup_loads_and_unloads_player_platform(hass, entry, client):
+    hass.states.async_set(
+        "media_player.synthetic_output", "idle", {"supported_features": Feature.PLAY_MEDIA}
+    )
     entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={"output_player": "media_player.synthetic_output"}
+    )
     with patch("custom_components.feiniu_music.create_client", return_value=client):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
@@ -359,3 +384,16 @@ async def test_real_entry_setup_loads_and_unloads_player_platform(hass, entry, c
         await hass.async_block_till_done()
         assert entry.entry_id not in hass.data[DOMAIN]["entries"]
     client.__aexit__.assert_awaited_once()
+
+
+async def test_add_or_next_context_song_enqueues_only_selected_occurrence(player, client):
+    controller, speaker = player
+    client.page.return_value = {"list": [track("one"), track("two"), track("three")], "total": 3}
+    entry = controller.runtime.entry.entry_id
+    selected = f"media-source://feiniu_music/{entry}/track/queue/1/two"
+    await controller.async_play_media("music", selected, enqueue="add")
+    await controller.async_play_media("music", selected, enqueue="next")
+    queue = controller.control.queue
+    assert [queue.items[key].track_id for key in queue.order] == ["two", "two"]
+    assert len(set(queue.order)) == 2
+    assert not speaker.calls

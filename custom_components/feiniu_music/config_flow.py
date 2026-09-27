@@ -8,22 +8,33 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .api import create_client
 from .client import AuthenticationError, FeiNiuError, NetworkError, RateLimitError
 from .const import CONF_ACCOUNT_ID, CONF_DEVICE_ID, DOMAIN
+from .output import OutputBinding, validate_output
+from .players import CONF_OUTPUTS, bindings
 from .runtime import normalize_url
 
 
 class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Manage independent music entries and password-only reconfiguration."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         super().__init__()
         self._device_id = uuid4().hex
+        self._account_data: dict[str, Any] = {}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Set up an account without storing a failed login or echoing its password."""
@@ -47,7 +58,8 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_response"
                 else:
                     data[CONF_ACCOUNT_ID] = user["guid"]
-                    return self.async_create_entry(title=f"FeiNiu Music — {username}", data=data)
+                    self._account_data = data
+                    return await self.async_step_outputs()
             except ValueError:
                 errors["base"] = "invalid_input"
             except AuthenticationError:
@@ -69,6 +81,27 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
         )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return FeiNiuOptionsFlow()
+
+    async def async_step_outputs(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                selected = select_outputs(self.hass, user_input.get(CONF_OUTPUTS, []), {})
+                return self.async_create_entry(
+                    title=f"FeiNiu Music — {self._account_data[CONF_USERNAME]}",
+                    data=self._account_data,
+                    options={CONF_OUTPUTS: selected},
+                )
+            except HomeAssistantError, ValueError:
+                errors["base"] = "invalid_output"
+        return self.async_show_form(step_id="outputs", errors=errors, data_schema=output_schema([]))
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """Start HA's normal password recovery flow for an existing source."""
@@ -130,4 +163,55 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 }
             ),
+        )
+
+
+def output_schema(selected: list[str]) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Optional(CONF_OUTPUTS, default=selected): EntitySelector(
+                EntitySelectorConfig(domain="media_player", multiple=True)
+            )
+        }
+    )
+
+
+def select_outputs(hass, entities: list[str], options: dict) -> list[dict[str, str]]:
+    existing = bindings(options)
+    result = {}
+    for entity_id in entities:
+        prior = next(
+            (
+                item
+                for item in existing.values()
+                if entity_id in {item.entity_id, item.resolve(hass)}
+            ),
+            None,
+        )
+        binding = prior or OutputBinding.from_entity(hass, entity_id)
+        validate_output(hass, binding, existing=prior is not None)
+        result[binding.key] = binding.snapshot()
+    return list(result.values())
+
+
+class FeiNiuOptionsFlow(config_entries.OptionsFlow):
+    """Selection changes are applied incrementally without reloading the account."""
+
+    async def async_step_init(self, user_input=None) -> ConfigFlowResult:
+        return await self.async_step_outputs(user_input)
+
+    async def async_step_outputs(self, user_input=None) -> ConfigFlowResult:
+        options = dict(self.config_entry.options)
+        errors = {}
+        if user_input is not None:
+            try:
+                selected = select_outputs(self.hass, user_input.get(CONF_OUTPUTS, []), options)
+                return self.async_create_entry(title="", data={**options, CONF_OUTPUTS: selected})
+            except HomeAssistantError, ValueError:
+                errors["base"] = "invalid_output"
+        selected_ids = [
+            item.resolve(self.hass) or item.entity_id for item in bindings(options).values()
+        ]
+        return self.async_show_form(
+            step_id="outputs", errors=errors, data_schema=output_schema(selected_ids)
         )

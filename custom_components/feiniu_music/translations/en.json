@@ -24,19 +24,51 @@
         "data": {
           "password": "Music password"
         }
+      },
+      "outputs": {
+        "title": "Select queue outputs",
+        "description": "Create an independent FeiNiu queue for each selected output. Outputs must play HTTP audio from HA; advertised features do not guarantee all formats. Different protocol entities for the same speaker may conflict. Leave empty to use only the media source.",
+        "data": {
+          "outputs": "Output players"
+        }
       }
     },
     "error": {
       "invalid_auth": "The music account could not log in.",
       "cannot_connect": "Could not connect to the music service.",
       "invalid_input": "Enter a valid music URL, username and password.",
-      "invalid_response": "The music service returned an unexpected response."
+      "invalid_response": "The music service returned an unexpected response.",
+      "invalid_output": "Output cannot play media or contains a wrapper loop."
     },
     "abort": {
       "already_configured": "This server and music account are already configured.",
       "identity_change": "To change server or music account, remove the old source and add it again. You can update the password for this source.",
       "reauth_successful": "Music password updated.",
       "reconfigure_successful": "Music password updated."
+    }
+  },
+  "options": {
+    "step": {
+      "outputs": {
+        "title": "Select queue outputs",
+        "description": "Create an independent FeiNiu queue for each selected output. Outputs must play HTTP audio from HA; advertised features do not guarantee all formats. Different protocol entities for the same speaker may conflict. Leave empty to use only the media source.",
+        "data": {
+          "outputs": "Output players"
+        }
+      }
+    },
+    "error": {
+      "invalid_output": "Output cannot play media or contains a wrapper loop."
+    }
+  },
+  "issues": {
+    "select_outputs": {
+      "title": "Select FeiNiu queue outputs",
+      "description": "Open integration options to select outputs. No speaker was selected automatically. The media source is still available."
+    },
+    "queue_storage": {
+      "title": "Queue storage needs repair",
+      "description": "The original file is preserved and will not be overwritten. Back it up and follow the queue recovery steps in the README. Queue persistence is unavailable until repaired."
     }
   }
 }

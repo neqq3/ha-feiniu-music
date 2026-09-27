@@ -24,19 +24,51 @@
         "data": {
           "password": "音乐密码"
         }
+      },
+      "outputs": {
+        "title": "选择队列输出",
+        "description": "为每个选中的播放器创建独立飞牛队列。输出必须能播放 HA 提供的 HTTP 音频；显示在列表中不代表所有格式都可播放。相同音箱的不同协议实体可能互相抢占。留空仍可使用独立媒体源。",
+        "data": {
+          "outputs": "输出播放器"
+        }
       }
     },
     "error": {
       "invalid_auth": "音乐账号登录失败。",
       "cannot_connect": "无法连接音乐服务。",
       "invalid_input": "请填写有效的音乐地址、用户名和密码。",
-      "invalid_response": "音乐服务返回了非预期响应。"
+      "invalid_response": "音乐服务返回了非预期响应。",
+      "invalid_output": "输出不可用、不支持播放或存在包装环路。"
     },
     "abort": {
       "already_configured": "该服务器及音乐账号已配置。",
       "identity_change": "更换服务器或音乐账号，请移除旧来源后重新添加；当前来源可以直接更新密码。",
       "reauth_successful": "音乐密码已更新。",
       "reconfigure_successful": "音乐密码已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "outputs": {
+        "title": "选择队列输出",
+        "description": "为每个选中的播放器创建独立飞牛队列。输出必须能播放 HA 提供的 HTTP 音频；显示在列表中不代表所有格式都可播放。相同音箱的不同协议实体可能互相抢占。留空仍可使用独立媒体源。",
+        "data": {
+          "outputs": "输出播放器"
+        }
+      }
+    },
+    "error": {
+      "invalid_output": "输出不可用、不支持播放或存在包装环路。"
+    }
+  },
+  "issues": {
+    "select_outputs": {
+      "title": "请选择飞牛队列输出",
+      "description": "请打开集成选项选择输出。未自动绑定任何音箱；原媒体源仍可使用。"
+    },
+    "queue_storage": {
+      "title": "队列存储需要修复",
+      "description": "原存储文件已保留，当前会话不会覆盖它。请备份后按 README 的队列存储恢复步骤处理；暂时不要依赖队列持久化。"
     }
   }
 }

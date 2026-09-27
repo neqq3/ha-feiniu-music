@@ -22,6 +22,7 @@ from .client import (
 from .const import DOMAIN, KINDS
 from .media import mime_type, valid_id
 from .runtime import FeiNiuRuntime
+from .streaming import AudioRound
 
 
 def runtime_for(hass: HomeAssistant, entry_id: str, scope: str) -> FeiNiuRuntime:
@@ -72,7 +73,14 @@ class FeiNiuAudioView(HomeAssistantView):
         return await self._serve(request, entry_id, scope, guid, head=False)
 
     async def _serve(
-        self, request: web.Request, entry_id: str, scope: str, guid: str, *, head: bool
+        self,
+        request: web.Request,
+        entry_id: str,
+        scope: str,
+        guid: str,
+        *,
+        head: bool,
+        route: AudioRound | None = None,
     ) -> web.StreamResponse:
         runtime = runtime_for(self.hass, entry_id, scope)
         byte_range = request.headers.get("Range")
@@ -83,6 +91,15 @@ class FeiNiuAudioView(HomeAssistantView):
             if (start and end and int(start) > int(end)) or (not start and int(end) == 0):
                 raise web.HTTPRequestRangeNotSatisfiable
         delivered: web.StreamResponse | None = None
+        task = asyncio.current_task()
+        if route:
+            try:
+                route.check()
+            except NotFoundError as err:
+                raise http_error(err) from err
+            if task:
+                route.tasks.add(task)
+            route.event("head" if head else "get")
         try:
             valid_id(guid)
             async with runtime.activity():
@@ -110,15 +127,39 @@ class FeiNiuAudioView(HomeAssistantView):
                                 return web.Response(status=native.status, headers=headers)
                             delivered = web.StreamResponse(status=native.status, headers=headers)
                             await delivered.prepare(request)
+                            first = True
                             async for chunk in upstream.chunks():
-                                await delivered.write(chunk)
-                            await delivered.write_eof()
+                                if route:
+                                    route.check()
+                                try:
+                                    await delivered.write(chunk)
+                                except ConnectionResetError:
+                                    # A player may close an old Range request when seeking.
+                                    # Downstream disconnect is not an upstream media refusal.
+                                    if route:
+                                        route.event("cancelled")
+                                    delivered.force_close()
+                                    return delivered
+                                if first and chunk:
+                                    first = False
+                                    if route:
+                                        route.event("first_byte")
+                            try:
+                                await delivered.write_eof()
+                            except ConnectionResetError:
+                                if route:
+                                    route.event("cancelled")
+                                return delivered
+                            if route:
+                                route.event("eof")
                             return delivered
                     except AuthenticationError:
                         if attempt or delivered is not None:
                             raise
                         await runtime.reauthenticate(generation)
         except FeiNiuError as err:
+            if route:
+                route.event("error")
             if delivered is None:
                 raise http_error(err) from err
             delivered.force_close()
@@ -126,6 +167,8 @@ class FeiNiuAudioView(HomeAssistantView):
                 request.transport.close()
             return delivered
         except aiohttp.ClientError, OSError, TimeoutError:
+            if route:
+                route.event("error")
             if delivered is not None:
                 delivered.force_close()
                 if request.transport:
@@ -133,10 +176,41 @@ class FeiNiuAudioView(HomeAssistantView):
                 return delivered
             raise web.HTTPServiceUnavailable(text="Music stream connection failed") from None
         except asyncio.CancelledError:
+            if route:
+                route.event("cancelled")
             if delivered is not None:
                 delivered.force_close()
             raise
+        finally:
+            if route and task:
+                route.tasks.discard(task)
         raise web.HTTPServiceUnavailable(text="Music authentication failed")
+
+
+class FeiNiuSessionAudioView(FeiNiuAudioView):
+    """Same Range/auth/error handling, with a distinct cancellable output round."""
+
+    url = "/api/feiniu_music/{entry_id}/{scope}/session/{token}/{guid}"
+    name = "api:feiniu_music:session_audio"
+
+    async def head(
+        self, request: web.Request, entry_id: str, scope: str, guid: str, token: str = ""
+    ) -> web.StreamResponse:
+        return await self._session(request, entry_id, scope, guid, token, head=True)
+
+    async def get(
+        self, request: web.Request, entry_id: str, scope: str, guid: str, token: str = ""
+    ) -> web.StreamResponse:
+        return await self._session(request, entry_id, scope, guid, token, head=False)
+
+    async def _session(
+        self, request: web.Request, entry_id: str, scope: str, guid: str, token: str, *, head: bool
+    ) -> web.StreamResponse:
+        runtime = runtime_for(self.hass, entry_id, scope)
+        route = runtime.audio_rounds.get(token)
+        if route is None or route.guid != guid:
+            raise web.HTTPNotFound
+        return await self._serve(request, entry_id, scope, guid, head=head, route=route)
 
 
 class FeiNiuImageView(HomeAssistantView):
