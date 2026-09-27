@@ -241,11 +241,11 @@ class FeiNiuPlayer(MediaPlayerEntity):
         if len(parts) == 2 and parts[0] == "track":
             rows = [{"guid": parts[1]}]
         elif parts == ["track"]:
-            rows = await self.runtime.collection("track")
+            rows = await self.runtime.collection("track", fresh=True)
         elif len(parts) == 2 and parts[0] in {"album", "playlist", "artist"}:
-            rows = await self.runtime.related(parts[0], parts[1])
+            rows = await self.runtime.related(parts[0], parts[1], fresh=True)
         elif len(parts) == 3 and parts[0] == "artist" and parts[2] == "tracks":
-            rows = await self.runtime.related("artist", parts[1])
+            rows = await self.runtime.related("artist", parts[1], fresh=True)
         else:
             raise ServiceValidationError("Select a track, album, playlist or artist track list")
         guids = [valid_id(row["guid"]) for row in rows]

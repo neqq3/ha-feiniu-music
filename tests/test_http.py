@@ -1,8 +1,10 @@
 """Real loopback HTTP and HA authentication, not a mocked stream iterator."""
 
+import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
 from aiohttp import web
 from didl_lite import didl_lite
@@ -17,7 +19,12 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.feiniu_music.client import FeiNiuClient, ProtocolProfile
 from custom_components.feiniu_music.const import DOMAIN
-from custom_components.feiniu_music.http import FeiNiuArtworkView, FeiNiuAudioView, FeiNiuImageView
+from custom_components.feiniu_music.http import (
+    FeiNiuArtworkView,
+    FeiNiuAudioView,
+    FeiNiuImageView,
+    image_response,
+)
 from custom_components.feiniu_music.media_source import FeiNiuMediaSource
 from custom_components.feiniu_music.runtime import ARTWORK_LIFETIME, FeiNiuRuntime
 
@@ -260,3 +267,85 @@ async def test_short_artwork_reload_and_unload_invalidate_grants(hass, delivery,
     hass.data[DOMAIN]["entries"][runtime.entry.entry_id] = replacement
     assert (await browser.get(path)).status == 404
     runtime.client.detail.assert_not_called()
+
+
+async def test_image_revalidation_checks_owner_before_304(delivery, runtime, monkeypatch):
+    browser, _, _, _, _ = delivery
+    clock = [100.0]
+    monkeypatch.setattr("custom_components.feiniu_music.runtime.monotonic", lambda: clock[0])
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
+    runtime.client.cover = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n" + b"synthetic image")
+    token = runtime.grant_artwork("track", "track-one", "cover-one")
+    path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/artwork?token={token}"
+    first = await browser.get(path)
+    assert first.status == 200 and await first.read() == runtime.client.cover.return_value
+    assert first.headers["Cache-Control"] == "private, no-cache"
+    etag = first.headers["ETag"]
+    for condition in (etag, f"W/{etag}", "*"):
+        repeated = await browser.get(path, headers={"If-None-Match": condition})
+        assert repeated.status == 304 and await repeated.read() == b""
+        assert repeated.headers["ETag"] == etag
+    runtime.client.cover.assert_awaited_once()
+    # A matching browser ETag never authorizes an owner or cover by itself.
+    clock[0] += 31
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one", accessStatus=2)}
+    denied = await browser.get(path, headers={"If-None-Match": etag})
+    assert denied.status == 403
+    runtime.client.cover.assert_awaited_once()
+
+
+async def test_image_changed_after_cache_expiry_returns_new_body(delivery, runtime, monkeypatch):
+    from custom_components.feiniu_music.runtime import COVER_TTL
+
+    browser, _, _, _, _ = delivery
+    clock = [100.0]
+    monkeypatch.setattr("custom_components.feiniu_music.runtime.monotonic", lambda: clock[0])
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
+    runtime.client.cover = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nold")
+    path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/{runtime.scope}/image/track/track-one/cover-one"
+    path = async_sign_path(runtime.hass, path, timedelta(minutes=10))
+    first = await browser.get(path)
+    assert first.status == 200
+    etag = first.headers["ETag"]
+    clock[0] += COVER_TTL
+    runtime.client.cover.return_value = b"\x89PNG\r\n\x1a\nnew"
+    changed = await browser.get(path, headers={"If-None-Match": etag})
+    assert changed.status == 200 and changed.headers["ETag"] != etag
+    assert await changed.read() == runtime.client.cover.return_value
+    assert runtime.client.cover.await_count == 2
+
+
+async def test_disconnected_image_request_cancels_unneeded_download(
+    runtime, client, aiohttp_server
+):
+    """Use HA's actual handler_cancellation=True server behavior with a real socket."""
+    started, cleaned, handler_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    client.detail.return_value = {"track": track(coverId="cover")}
+
+    async def fetch(cover):
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    client.cover.side_effect = fetch
+
+    async def serve(request):
+        try:
+            return await image_response(runtime, "track", "track-one", "cover", request)
+        finally:
+            handler_done.set()
+
+    app = web.Application()
+    app.router.add_get("/image", serve)
+    # This aiohttp TestServer already enables handler cancellation, as HA does.
+    server = await aiohttp_server(app)
+    async with aiohttp.ClientSession() as session:
+        request = asyncio.create_task(session.get(server.make_url("/image")))
+        await started.wait()
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        await asyncio.wait_for(handler_done.wait(), timeout=2)
+    assert cleaned.is_set() and not runtime._cover_tasks and not runtime._cover_waiters

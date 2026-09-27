@@ -92,8 +92,26 @@ automatically; an automation or custom card can consume the action response.
   associations. Runtime checks do not scan the full music library.
 - Detail cache lifetime is 30 seconds, maximum 128 entries per account. Playback rechecks
   track metadata. Already delivered metadata or artwork cannot be recalled from clients.
+- Complete collection, relationship and search results are reused for 30 seconds (at most
+  16 results / 10,000 rows per account); failures and partial pages are not cached. List
+  edits or permission changes may take that long to appear when browsing. Queue selection
+  refreshes its list and verifies the selected position; playback still checks each track's metadata.
+- Artwork source bytes are cached for five minutes (at most 512 images / 32 MiB per account).
+  Concurrent requests for the same cover share one download. Owner access and exact cover
+  association are checked before using cached bytes. Fresh account-filtered browse rows
+  supply those associations, avoiding a separate detail request for every thumbnail.
+  Missing/expired associations use native detail instead; browsing never triggers a full
+  library scan just to authorize an image. Both sources have a 30-second access window,
+  and browsing cached rows does not extend it. A newly observed detail refusal invalidates
+  older browse results for that owner. Browse thumbnail endpoints revalidate privately
+  with ETags; an unchanged image returns 304 only after that check. Replacing image bytes
+  under the same cover ID may take up to five minutes to appear. Reload clears these caches.
+- At most two image requests per account enter native access checks/downloads concurrently,
+  leaving navigation and audio out of a large thumbnail backlog. Disconnecting the last
+  consumer cancels its shared download; other active consumers keep their download.
 - Native service URLs and music cookies remain server-side. Audio uses a path-bound
   HA signed URL (two hours); browser thumbnails use signed paths (thirty minutes).
+  Repeated browsing reuses these thumbnail URLs, rotating a minute before expiry.
   DLNA artwork uses a short, random, two-hour grant bound to one owner and cover because
   the tested MA3 truncates long artwork URLs at 256 characters. Each entry retains at most
   128 such grants; normal owner/access checks still apply on fetch. Treat these URLs as

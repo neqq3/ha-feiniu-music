@@ -118,6 +118,93 @@ shuffle, repeat and output selection. Queues do not survive reload/restart; outp
 choice does. Natural completion requires usable device state/identity/position;
 this behavior has been exercised on this MA3 only.
 
+## Initial browse/artwork cache update
+
+The cache candidate was checked in a separate directory using the existing HA 2026.9.4
+test environment. The targeted runtime/HTTP/cache tests passed (58 tests); the entire
+integration suite passed (162 tests). Ruff check/format and mypy passed (12 source files).
+
+Regression coverage includes per-entry byte/result caches, TTL and size bounds, complete
+filtered pagination with duplicate positions, failed refresh propagation, exact owner checks
+ahead of cached images/304 responses, conditional HTTP responses, one-consumer cancellation,
+unload cleanup, and separate signed URLs for different HA browser sessions. No live permission
+changes, playback controls, or NAS modifications were needed for these offline checks.
+
+After user-approved deployment/restart of the independent test HA, the same 150-entry
+playlist and first eight cover URLs (four concurrent requests) were measured read-only:
+
+| Operation | Before | After |
+| --- | --- | --- |
+| First playlist browse | 507.7 ms | 511.2 ms |
+| Repeated playlist browse | 265.6 / 265.0 ms | 6.6 / 5.9 ms |
+| First batch of eight covers | 4003.0 ms | 3517.1 ms |
+| Repeated same eight URLs | 2006.4 ms | 3.0 ms |
+| Conditional cover revalidation | Not implemented | 2.2 ms; all eight HTTP 304 |
+
+All 150 tracks and their order were retained; repeated thumbnail URLs were stable.
+All eight image content hashes matched the earlier measurement. These are HTTP/WebSocket
+request timings, not browser paint or speaker latency, and repeated reads occurred within
+the cache lifetime. Cold requests and owner checks after the 30-second detail cache expires
+still contact the NAS. No playback was started by the benchmark. The authorized restart
+cleared the in-memory queue; no normal MA or NAS settings were changed.
+
+## Complete browse-path update
+
+The initial cache update missed the root folders. The final implementation also caches
+track/album/artist/playlist collections, their relationships, and searches for 30 seconds.
+It reuses those fresh account-filtered rows for exact artwork ownership, without using
+them as playback authorization. Queue selection still refreshes its native list.
+
+The final candidate passed 59 targeted tests and all 186 integration tests in the existing
+HA 2026.9.4 environment, plus Ruff check/format (24 Python files), mypy (12 source files),
+and `git diff --check`. New coverage includes all browse paths, a 164-image grid with
+128 KiB synthetic covers, failed/incomplete pagination, non-extending access TTLs, earlier
+browse data superseded by a new detail refusal, exact owner binding, image concurrency,
+and real HTTP-disconnect cancellation. Shared downloads remain alive while another
+consumer needs them. These tests do not require a NAS or credentials.
+
+The first whole-grid measurement exposed a capacity failure that the earlier eight-image
+sample missed: 164 responses contained 20,812,764 bytes. The 16 MiB cache caused repeated
+eviction and the second pass took 65,707.4 ms. That failed measurement is retained. With a
+32 MiB / 512-image per-entry cap, the repeated grid took 52.0 ms; all 164 conditional
+requests returned 304 in 39.2 ms. The content hashes matched between passes. The grid has
+139 unique images totaling 17,962,396 bytes. This is bounded source-image memory, not a
+disk cache or an unlimited full-library cache.
+
+Read-only WebSocket/HTTP measurements after deployment:
+
+| Browse path | Entries | First request | Immediate repeat |
+| --- | --- | --- | --- |
+| Tracks | 164 | 266.6 ms | 4.3 ms |
+| Playlists | 2 | 245.1 ms | 0.7 ms |
+| Album tracks | 3 | 238.4 ms | 1.0 ms |
+| Artist tracks | 14 | 250.4 ms | 0.8 ms |
+| Artist albums | 1 | 249.3 ms | 0.8 ms |
+| Playlist tracks | 150 | 509.2 ms | 5.0 ms |
+| Search | 1 | 243.3 ms | 0.9 ms |
+
+The 139-album and 128-artist root folders also retained their counts/order, with warm
+requests around 3 ms. Their first reads were already primed by the navigation probe,
+so these are not cold-load measurements. All repeated relationship lists kept their order.
+While images were loading, album navigation completed in 1,437.8 ms; the probe cancelled
+its own 12 remaining HTTP consumers, then artist navigation completed in 497.7 ms.
+No player-control service was called.
+
+The entire initial grid download after the small probes still took 42,384.1 ms. Native
+request throttling remains unchanged, and access checks resume when the 30-second owner
+window expires. This does not claim instant cold loading, nor browser rendering timing.
+A prior 31-second expiry check of the same browse/ownership logic refreshed the 164-track
+list in 508.1 ms and reused eight cover bodies in 3.2 ms; the two playlist covers reused
+in 2.4 ms. That check preceded only the capacity adjustment from 16 to 32 MiB.
+
+After the complete grid pass, the probe waited five minutes. HA closed its idle WebSocket
+before the next command, so that attempt did not exercise the expired cache. Reconnecting
+357.9 seconds after the last complete pass, the final version returned 164 tracks in
+265.2 ms (repeat 4.3 ms); eight expired covers took 1,487.8 ms and their immediate repeat
+took 2.0 ms, all HTTP 200. The probe failure and the resumed measurement are both retained.
+The deployed 12 Python source files matched the tested candidate. The independent HA
+was restarted for deployment; no production MA/NAS settings or music files were changed.
+
 ## Evidence and limits
 
 Sanitized live summaries and deployment probes are retained outside this repository under

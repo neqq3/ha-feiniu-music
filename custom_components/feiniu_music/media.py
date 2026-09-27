@@ -2,11 +2,9 @@
 
 import re
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
 from didl_lite import didl_lite
-from homeassistant.components.http.auth import async_sign_path
 from homeassistant.components.media_player import MediaClass, MediaType
 from homeassistant.components.media_player.browse_media import async_process_play_media_url
 from homeassistant.components.media_source import BrowseMediaSource, PlayMedia
@@ -98,7 +96,7 @@ def thumbnail(
         token = runtime.grant_artwork(kind, guid, cover)
         return f"/api/{DOMAIN}/{runtime.entry.entry_id}/artwork?token={token}"
     path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/{runtime.scope}/image/{kind}/{guid}/{cover}"
-    return async_sign_path(runtime.hass, path, timedelta(minutes=30))
+    return runtime.thumbnail_path(path)
 
 
 def media_item(runtime: FeiNiuRuntime, kind: str, row: dict[str, Any]) -> BrowseMediaSource:

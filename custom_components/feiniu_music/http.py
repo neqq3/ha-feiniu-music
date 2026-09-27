@@ -1,6 +1,7 @@
 """Authenticated HA endpoints for original audio and owner-bound artwork."""
 
 import asyncio
+import hashlib
 import re
 
 import aiohttp
@@ -158,7 +159,7 @@ class FeiNiuImageView(HomeAssistantView):
         try:
             valid_id(guid)
             valid_id(cover)
-            return await image_response(runtime, kind, guid, cover)
+            return await image_response(runtime, kind, guid, cover, request)
         except FeiNiuError as err:
             raise http_error(err) from err
 
@@ -179,21 +180,32 @@ class FeiNiuArtworkView(HomeAssistantView):
         if runtime is None:
             raise web.HTTPNotFound
         try:
-            owner = runtime.artwork_owner(request.query.get("token", ""))
-            return await image_response(runtime, *owner)
+            kind, guid, cover = runtime.artwork_owner(request.query.get("token", ""))
+            return await image_response(runtime, kind, guid, cover, request)
         except FeiNiuError as err:
             raise http_error(err) from err
 
 
-async def image_response(runtime: FeiNiuRuntime, kind: str, guid: str, cover: str) -> web.Response:
+async def image_response(
+    runtime: FeiNiuRuntime, kind: str, guid: str, cover: str, request: web.Request
+) -> web.Response:
     """Both image URL forms use the same owner check and authenticated native request."""
     async with runtime.activity():
         data = await runtime.cover(kind, guid, cover)
     content_type = {"jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[
         classify_media(data)
     ]
+    etag = hashlib.sha256(data).hexdigest()
+    headers = {
+        # Revalidate owner access even when the browser already has the image.
+        "Cache-Control": "private, no-cache",
+        "ETag": f'"{etag}"',
+        "X-Content-Type-Options": "nosniff",
+    }
+    if request.if_none_match and any(tag.value in {etag, "*"} for tag in request.if_none_match):
+        return web.Response(status=304, headers=headers)
     return web.Response(
         body=data,
         content_type=content_type,
-        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        headers=headers,
     )

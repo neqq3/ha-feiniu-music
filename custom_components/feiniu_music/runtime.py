@@ -7,14 +7,19 @@ import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import timedelta
 from functools import partial
 from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 
+from homeassistant.components import websocket_api
+from homeassistant.components.http.auth import async_sign_path
+from homeassistant.components.http.const import KEY_HASS_REFRESH_TOKEN_ID
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.http import current_request
 
 from .client import (
     AuthenticationError,
@@ -27,6 +32,14 @@ from .const import CONF_ACCOUNT_ID, CONF_DEVICE_ID, PAGE_SIZE
 
 ARTWORK_LIFETIME = 2 * 60 * 60
 MAX_ARTWORK_GRANTS = 128
+COVER_TTL = 5 * 60
+MAX_COVER_BYTES = 32 * 1024 * 1024
+MAX_COVERS = 512
+BROWSE_TTL = 30
+MAX_BROWSE_RESULTS = 16
+MAX_BROWSE_ROWS = 10000
+THUMBNAIL_LIFETIME = 30 * 60
+MAX_THUMBNAIL_PATHS = 2048
 
 
 def normalize_url(value: str) -> str:
@@ -88,6 +101,13 @@ class FeiNiuRuntime:
         self._failed_generation: int | None = None
         self._login_lock = asyncio.Lock()
         self._details: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._covers: dict[str, tuple[float, bytes]] = {}
+        self._cover_tasks: dict[str, asyncio.Task[bytes]] = {}
+        self._cover_waiters: dict[asyncio.Task[bytes], int] = {}
+        self._image_slots = asyncio.Semaphore(2)
+        self._browse_results: dict[tuple[str, ...], tuple[float, str, list[dict[str, Any]]]] = {}
+        self._browse_lock = asyncio.Lock()
+        self._thumbnail_paths: dict[tuple[str | None, str], tuple[float, str]] = {}
         self._artwork_grants: dict[str, tuple[float, str, str, str]] = {}
         self._active: set[asyncio.Task] = set()
 
@@ -102,6 +122,9 @@ class FeiNiuRuntime:
             raise AuthenticationError("Music account identity changed; add a new source")
         self.generation += 1
         self._details.clear()
+        self._covers.clear()
+        self._browse_results.clear()
+        self._thumbnail_paths.clear()
 
     async def reauthenticate(self, generation: int) -> None:
         """Coordinate a single retry; invalid credentials start HA's reauth flow."""
@@ -140,14 +163,22 @@ class FeiNiuRuntime:
         cached = self._details.get(key)
         if not fresh and cached and monotonic() - cached[0] < 30:
             return deepcopy(cached[1])
-        data = await self.call(lambda: self.client.detail(kind, guid))
-        row = data.get("track") if kind == "track" else data
-        if not isinstance(row, dict) or row.get("guid") != guid:
-            raise ProtocolError("Native detail has the wrong identity")
-        if kind == "track":
-            require_track(row)
-            # Metadata carries audioSpec beside track, unlike some list responses.
-            row = {**row, "audioSpec": data.get("audioSpec") or row.get("audioSpec") or {}}
+        self._details.pop(key, None)
+        try:
+            data = await self.call(lambda: self.client.detail(kind, guid))
+            row = data.get("track") if kind == "track" else data
+            if not isinstance(row, dict) or row.get("guid") != guid:
+                raise ProtocolError("Native detail has the wrong identity")
+            if kind == "track":
+                require_track(row)
+                # Metadata carries audioSpec beside track, unlike some list responses.
+                row = {**row, "audioSpec": data.get("audioSpec") or row.get("audioSpec") or {}}
+        except NotFoundError, PermissionDeniedError, ProtocolError:
+            # A newly observed refusal supersedes an earlier successful browse.
+            for cache_key, (_, row_kind, rows) in list(self._browse_results.items()):
+                if row_kind == kind and any(item["guid"] == guid for item in rows):
+                    self._browse_results.pop(cache_key)
+            raise
         if len(self._details) >= 128:
             self._details.pop(next(iter(self._details)))
         self._details[key] = (monotonic(), deepcopy(row))
@@ -190,29 +221,171 @@ class FeiNiuRuntime:
                 raise ProtocolError("Native pagination stopped before the reported total")
         raise ProtocolError("Native pagination safety limit exceeded")
 
-    async def collection(self, kind: str) -> list[dict[str, Any]]:
+    async def collection(self, kind: str, *, fresh: bool = False) -> list[dict[str, Any]]:
         """Enumerate the account-filtered native library; never use it as a permission probe."""
-        if kind == "playlist":
-            return await self.call(self.client.playlists)
-        return await self.pages(lambda page: self.client.page(kind, page))
 
-    async def related(self, kind: str, guid: str, *, albums: bool = False) -> list[dict[str, Any]]:
+        async def read() -> list[dict[str, Any]]:
+            if kind == "playlist":
+                return await self.call(self.client.playlists)
+            return await self.pages(lambda page: self.client.page(kind, page))
+
+        return await self._browse(("collection", kind), kind, read, fresh=fresh)
+
+    async def related(
+        self, kind: str, guid: str, *, albums: bool = False, fresh: bool = False
+    ) -> list[dict[str, Any]]:
         """Music 1.0.1 filters album/artist children server-side; only playlist rows carry status."""
-        return await self.pages(
-            lambda page: self.client.related(kind, guid, page, albums=albums),
-            playlist=kind == "playlist",
-        )
+        self.check_open()
+
+        async def read() -> list[dict[str, Any]]:
+            return await self.pages(
+                lambda page: self.client.related(kind, guid, page, albums=albums),
+                playlist=kind == "playlist",
+            )
+
+        row_kind = "album" if albums else "track"
+        return await self._browse(("related", kind, guid, row_kind), row_kind, read, fresh=fresh)
+
+    async def _browse(
+        self,
+        key: tuple[str, ...],
+        kind: str,
+        read: Callable[[], Awaitable[list[dict[str, Any]]]],
+        *,
+        fresh: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Reuse only complete native results; hits never extend their original lifetime."""
+        self.check_open()
+        cached = self._browse_results.get(key)
+        if not fresh and cached and monotonic() - cached[0] < BROWSE_TTL:
+            return deepcopy(cached[2])
+        async with self._browse_lock:
+            self.check_open()
+            now = monotonic()
+            for expired, (created, _, _) in list(self._browse_results.items()):
+                if now - created >= BROWSE_TTL:
+                    self._browse_results.pop(expired)
+            if not fresh and (cached := self._browse_results.get(key)):
+                return deepcopy(cached[2])
+            self._browse_results.pop(key, None)
+            rows = await read()
+            if len(rows) <= MAX_BROWSE_ROWS:
+                while self._browse_results and (
+                    len(self._browse_results) >= MAX_BROWSE_RESULTS
+                    or sum(len(value[2]) for value in self._browse_results.values()) + len(rows)
+                    > MAX_BROWSE_ROWS
+                ):
+                    self._browse_results.pop(next(iter(self._browse_results)))
+                # Start the TTL before fetching, not after a potentially slow pagination.
+                self._browse_results[key] = (now, kind, deepcopy(rows))
+            return rows
 
     async def search(self, kind: str, query: str) -> list[dict[str, Any]]:
         """Read complete account-filtered search results in native order."""
-        return await self.pages(lambda page: self.client.search(kind, query, page, PAGE_SIZE))
+        return await self._browse(
+            ("search", kind, query),
+            kind,
+            lambda: self.pages(lambda page: self.client.search(kind, query, page, PAGE_SIZE)),
+        )
+
+    def _cover_owner(self, kind: str, guid: str) -> dict[str, Any] | None:
+        """Reuse fresh, server-filtered browse rows for exact artwork ownership only."""
+        now = monotonic()
+        newest = now - BROWSE_TTL
+        owner = None
+        if (cached := self._details.get((kind, guid))) and cached[0] > newest:
+            newest, owner = cached
+        for created, row_kind, rows in self._browse_results.values():
+            if row_kind != kind or created <= newest:
+                continue
+            for row in rows:
+                if row["guid"] == guid:
+                    newest, owner = created, row
+                    break
+        if owner is not None and kind == "track" and "accessStatus" in owner:
+            require_track(owner)
+        # Music 1.0.1 collection/search/album/artist rows are account-filtered;
+        # some omit accessStatus. Playlist rows were explicitly filtered by pages().
+        # None of these rows substitutes for fresh playback metadata.
+        return owner
 
     async def cover(self, kind: str, guid: str, cover: str) -> bytes:
         """A currently accessible owner cannot authorize an unrelated cover identifier."""
-        row = await self.detail(kind, guid)
-        if cover not in cover_ids(row):
-            raise PermissionDeniedError("Image does not belong to this media item")
-        return await self.call(lambda: self.client.cover(cover))
+        # Limit image traffic entering the client's shared request queue, so navigating
+        # away from a large grid does not put navigation/audio behind every thumbnail.
+        async with self._image_slots:
+            self.check_open()
+            row = self._cover_owner(kind, guid)
+            if row is None or cover not in cover_ids(row):
+                row = await self.detail(kind, guid)
+            if cover not in cover_ids(row):
+                raise PermissionDeniedError("Image does not belong to this media item")
+            return await self._cover_data(cover)
+
+    async def _cover_data(self, cover: str) -> bytes:
+        """Share downloads while at least one authorized consumer still needs them."""
+        # Authorization stays ahead of both cached bytes and shared downloads.
+        if (cached := self._covers.get(cover)) and monotonic() - cached[0] < COVER_TTL:
+            return cached[1]
+        if (task := self._cover_tasks.get(cover)) is None:
+            task = self.hass.async_create_task(
+                self._fetch_cover(cover), "FeiNiu artwork fetch", eager_start=False
+            )
+            self._cover_tasks[cover] = task
+        self._cover_waiters[task] = self._cover_waiters.get(task, 0) + 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            self._cover_waiters[task] -= 1
+            if not self._cover_waiters[task]:
+                self._cover_waiters.pop(task)
+                if self._cover_tasks.get(cover) is task:
+                    self._cover_tasks.pop(cover)
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def _fetch_cover(self, cover: str) -> bytes:
+        """Keep a bounded source-byte cache; entry unload owns these short-lived tasks."""
+        data = await self.call(lambda: self.client.cover(cover))
+        now = monotonic()
+        for key, (created, _) in list(self._covers.items()):
+            if now - created >= COVER_TTL:
+                self._covers.pop(key)
+        if len(data) <= MAX_COVER_BYTES:
+            while self._covers and (
+                len(self._covers) >= MAX_COVERS
+                or sum(len(value[1]) for value in self._covers.values()) + len(data)
+                > MAX_COVER_BYTES
+            ):
+                self._covers.pop(next(iter(self._covers)))
+            self._covers[cover] = (now, data)
+        return data
+
+    def thumbnail_path(self, path: str) -> str:
+        """Reuse an exact signed path, rotating before the HA signature expires."""
+        self.check_open()
+        now = monotonic()
+        # HA signs with the current browser session's issuer. Never reuse its
+        # signed link in another HA session, even for the same music account.
+        issuer = None
+        if (connection := websocket_api.current_connection.get()) and connection.refresh_token_id:
+            issuer = connection.refresh_token_id
+        elif (request := current_request.get()) is not None:
+            issuer = request.get(KEY_HASS_REFRESH_TOKEN_ID)
+        cache_key = (issuer, path)
+        for key, (expires, _) in list(self._thumbnail_paths.items()):
+            if expires <= now:
+                self._thumbnail_paths.pop(key)
+        if cached := self._thumbnail_paths.get(cache_key):
+            return cached[1]
+        if len(self._thumbnail_paths) >= MAX_THUMBNAIL_PATHS:
+            self._thumbnail_paths.pop(next(iter(self._thumbnail_paths)))
+        signed = async_sign_path(
+            self.hass, path, timedelta(seconds=THUMBNAIL_LIFETIME), refresh_token_id=issuer
+        )
+        self._thumbnail_paths[cache_key] = (now + THUMBNAIL_LIFETIME - 60, signed)
+        return signed
 
     def grant_artwork(self, kind: str, guid: str, cover: str) -> str:
         """Issue a bounded, short-lived image grant for length-limited DLNA players."""
@@ -253,12 +426,16 @@ class FeiNiuRuntime:
         """Invalidate cached media and close all streams belonging to this entry."""
         self.closed = True
         self._details.clear()
+        self._covers.clear()
+        self._browse_results.clear()
+        self._thumbnail_paths.clear()
         self._artwork_grants.clear()
-        tasks = [task for task in self._active if task is not asyncio.current_task()]
+        tasks = list((self._active | set(self._cover_tasks.values())) - {asyncio.current_task()})
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        self._cover_tasks.clear()
         await self.client.__aexit__(None, None, None)
 
     def check_open(self) -> None:
