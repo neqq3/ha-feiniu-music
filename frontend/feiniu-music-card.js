@@ -5,7 +5,7 @@ import {CARD_FONT} from './card-font.js';
 import {CARD_BRAND} from './card-brand.js';
 import {COMPACT_CSS} from './card-compact.js';
 import './card-editor.js';
-export const VERSION = '0.3.0-compact-layout-2';
+export const VERSION = '0.3.0-compact-lyrics-400';
 let fontReady;
 function loadCardFont(){
   if(!globalThis.FontFace||fontReady)return;
@@ -167,7 +167,7 @@ export class FeiNiuMusicCard extends Base {
     if (this._connected) { this._build(); this._render(); }
   }
   getCardSize() { return this._config?.display_mode==='compact'?(this._compactRich?8:5):12; }
-  getGridOptions() { return this._config?.display_mode==='compact'?{columns:12,min_columns:9,rows:this._compactRich?7:5,min_rows:this._compactRich?7:5}:{columns:12,rows:12,min_columns:6,min_rows:8}; }
+  getGridOptions() { return this._config?.display_mode==='compact'?{columns:12,min_columns:9,rows:this._compactRich?8:5,min_rows:this._compactRich?8:5}:{columns:12,rows:12,min_columns:6,min_rows:8}; }
   static getStubConfig(hass) { return {entity:Object.keys(hass.states).find(id=>id.startsWith('media_player.')&&hass.states[id].attributes.feiniu_queue),display_mode:'compact',compact_view:'auto',compact_background:'artwork',compact_mask:'soft',theme:'dark'}; }
   static getConfigElement(){return document.createElement('feiniu-music-card-editor');}
   set hass(value) {
@@ -439,9 +439,14 @@ export class FeiNiuMusicCard extends Base {
     const padding=`${available/2}px`;if(box.style.getPropertyValue('--lyric-pad')!==padding)box.style.setProperty('--lyric-pad',padding);
     if(this._lyricResized){this._lyricResized=false;if(!this._lyricsManual)this._centreLyric(this._lastLine);else if(this._selectedLyric!=null)this._centreLyric(this._selectedLyric);}
     const rect=box.getBoundingClientRect(),middle=rect.top+rect.height/2;
-    // Batch geometry reads, then update only blur values that actually changed.
-    const values=[...box.querySelectorAll('.lyric-row')].map(row=>{const r=row.getBoundingClientRect(),distance=Math.abs(r.top+r.height/2-middle)/(rect.height/2);return [row,`${Math.max(0,Math.min(this._compactHome?1.5:4,(distance-.25)*(this._compactHome?2:5))).toFixed(1)}px`];});
-    for(const [row,blur] of values)if(row.style.getPropertyValue('--lyric-blur')!==blur)row.style.setProperty('--lyric-blur',blur);
+    // Depth follows each row's actual scroll position, not a fixed visible-line cutoff.
+    // Batch geometry reads before writing styles to avoid repeated layout work.
+    const compact=this._compactHome;
+    const values=[...box.querySelectorAll('.lyric-row')].map(row=>{const r=row.getBoundingClientRect(),distance=Math.abs(r.top+r.height/2-middle)/(rect.height/2);return [row,`${Math.max(0,Math.min(compact?2.6:4,(distance-(compact ? .12 : .25))*(compact?2.6:5))).toFixed(2)}px`,compact?Math.max(.46,.8-distance*.3).toFixed(3):''];});
+    for(const [row,blur,opacity] of values){
+      if(row.style.getPropertyValue('--lyric-blur')!==blur)row.style.setProperty('--lyric-blur',blur);
+      if(row.style.getPropertyValue('--lyric-opacity')!==opacity)row.style.setProperty('--lyric-opacity',opacity);
+    }
   }
   _centreLyric(index,smooth=false){
     const box=this.$('lyric-lines'),line=box.children[index];if(!line||!this._lyricsVisible)return;

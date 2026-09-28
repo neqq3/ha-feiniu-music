@@ -561,3 +561,18 @@ were added. No commit or push was performed for this local candidate.
   The expand target clears both header labels and artwork at each checked width.
 - Test HA serves byte-identical `0.3.0-compact-layout-2`. Deployment sent no playback
   command and required no restart or integration reload. No backend code changed.
+
+### Five short lines at 400 px (2026-09-28)
+
+- `0.3.0-compact-lyrics-400` makes the rich card 400 px tall, with a 164 px lyric
+  viewport. Text remains 16 px; a 24 px line height and 8 px gap fit five full
+  single-line paragraphs. The simple player keeps its previous dimensions.
+- Browser checks at 320/420/700 px viewport widths verify all five paragraphs fit
+  completely, with the current one centred. Edge paragraphs keep visible opacity;
+  blur increases on each side of the centre. Hover restores clear, bright text,
+  and a small scroll changes blur continuously rather than toggling visibility.
+- Wrapped long lyrics, left offset controls, right timestamp hit targets, touch,
+  full-page lyrics and both background overlays pass the complete browser suite.
+  Frontend unit tests: **6 passed**. Screenshots include short and wrapped examples.
+- Test HA serves byte-identical deployed JavaScript. No playback command, integration
+  reload or HA restart was sent. Backend tests were not rerun for this frontend change.

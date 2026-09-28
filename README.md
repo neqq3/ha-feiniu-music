@@ -28,7 +28,7 @@
 设置 → 仪表盘 → 资源中添加（需开启用户高级模式）：
 
 ```yaml
-url: /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-layout-2
+url: /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-400
 type: module
 ```
 
@@ -55,7 +55,9 @@ theme: dark
 `compact_view` 可选 `simple`（精简播放器）、`lyrics`（固定歌词区）或 `auto`（有歌词时展开，无歌词时收起为精简播放器）。
 歌词模式加载时显示加载提示，无歌词时显示“暂无歌词”，不会切换成大封面。自动模式在歌词尚未返回时保持精简。
 纯文本歌词直接显示，不模拟同步滚动；不提供额外的封面／歌词切换按钮，也不重复放大封面。
-歌词文字点选与时间跳转沿用完整播放页；顶部卡片名与音箱名合并为一行，减少的顶栏高度全部加给歌词区；偏移快捷按钮位于歌词左侧独立区域，不占额外一行，与右侧时间按钮分开。卡片总高度保持原样。
+歌词播放器卡片总高 400 像素，歌词区 164 像素；短句可同时显示当前句和上下各两句，长句换行时可见句数会减少。
+模糊与淡化随歌词距离中心的位置连续变化，只有最外沿用于淡出；悬停、聚焦或选中的句子恢复清晰。
+歌词文字点选与时间跳转沿用完整播放页；顶部卡片名与音箱名合并为一行，省出的高度留给歌词；偏移快捷按钮位于歌词左侧独立区域，不占额外一行，与右侧时间按钮分开。
 旧紧凑卡片未填 `compact_view` 时保留精简模式。点击封面打开播放／歌词界面，右上角展开按钮
 打开音乐库，队列按钮打开队列；它们共用同一个弹层和播放器，关闭不会停止播放。
 `full` 保留完整音乐界面，适合 HA 的 `panel` 视图；可选 `height: 700`（600–1200 像素）。
@@ -176,7 +178,7 @@ an independent queue; the original `media_source` remains available for direct s
 No Music Assistant, bridge, NAS administrator access, external database or transcoding service is required.
 
 Install `custom_components/feiniu_music`, restart HA, add the integration and select outputs.
-Register `/feiniu_music/feiniu-music-card.js?v=0.3.0-compact-layout-2` as a Lovelace JavaScript module and add
+Register `/feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-400` as a Lovelace JavaScript module and add
 `type: custom:feiniu-music-card` with the fixed FeiNiu `entity` ID. The visual editor selects the
 player, display mode, compact content, title and colors. New picker cards default to
 `display_mode: compact`, `compact_view: auto`, `compact_background: artwork`, `compact_mask: soft`, and dark colors.
@@ -186,8 +188,11 @@ lyric region and displays loading/empty text; it never substitutes enlarged artw
 YAML without `compact_view` keeps the simple player. The independent background preset is
 `default` (original colors/opacity, also used by older YAML) or `artwork` (cover ambiance), with
 `compact_mask: soft` (default soft veil) or `glass` (translucent glass) available for artwork.
-The lyrics card moves the space saved by its single-line header into the lyric region, keeping
-its total height unchanged. Offset controls sit on the left, separate from timestamps on the right.
+The 400 px lyrics card devotes 164 px to lyrics, fitting the current short line and two on each
+side; wrapped lyrics show fewer entries. Blur and opacity vary continuously with distance from
+the centre, with a fade at the outer edge. Hover, focus and selection restore clear text.
+The single-line header saves space for lyrics. Offset controls sit on the left, separate from
+timestamps on the right. The simple player retains its compact size.
 Legacy YAML without `display_mode` keeps the full interface. Compact cards expand into a shared
 modal for the library, queue or lyrics without changing playback. `display_mode: full` suits a
 panel view, with optional `height` (600–1200 pixels). The optional card provides

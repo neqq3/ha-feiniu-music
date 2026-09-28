@@ -10,17 +10,18 @@ export async function checkCompactLyrics(sourcePage){
     await first.locator('#mini-open').waitFor();
     await page.evaluate(()=>{
       document.querySelectorAll('feiniu-music-card')[1].remove();document.querySelector('.grid').style.display='block';
-      const text=['After the rain','The room grows quiet','A familiar song','Follows us home','Through the evening','Under the moon','We take our time','Let the music stay','One more moment','Before the morning'];
+      const text=['After the rain','Quiet room','A familiar song','Follows us home','Evening glow','Under the moon','We take our time','Let music stay','One more moment','Before dawn'];
       window.lyricFixture={text:text.join('\n'),synced_lines:text.map((text,i)=>({time_ms:i*4000,text}))};
       const state=hass.states['media_player.feiniu_a'];state.state='paused';state.attributes.media_position=13;
       const c=document.querySelector('feiniu-music-card');c.setConfig({entity:'media_player.feiniu_a',display_mode:'compact',compact_view:'auto',compact_background:'artwork'});c.hass=hass;
     });
     await first.locator('.lyric-row.current').waitFor();
     const height=(await first.boundingBox()).height;
-    assert.equal(height,386,'Single-line header and left offset controls preserve the deployed total height');
+    assert.equal(height,400,'Rich compact card has the requested total height');
     assert.equal(Math.round((await first.locator('.compact-heading').boundingBox()).height),32,'Header really shrinks by 14px instead of only changing text direction');
-    assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),150,'All 14px saved by the header go to the lyrics');
-    assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),150,'Offset toolbar consumes no lyric height');
+    assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),164,'Added height goes to lyrics');
+    assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),164,'Offset toolbar consumes no lyric height');
+    assert(await first.evaluate(c=>c.getGridOptions().rows===8),'HA reserves enough grid space for the taller lyrics card');
     assert(await first.locator('.compact-labels').evaluate(e=>{const a=e.firstElementChild.getBoundingClientRect(),b=e.lastElementChild.getBoundingClientRect();return b.left>a.right&&Math.abs(a.bottom-b.bottom)<5;}),'Card and output names share one header line');
     assert.equal(await first.locator('.lyric-row.current p').textContent(),'Follows us home');
     assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/lyrics').length),1);
@@ -30,8 +31,27 @@ export async function checkCompactLyrics(sourcePage){
     assert.equal(await first.evaluate(c=>c._raf),0,'Paused cards do not keep an animation loop running');
     await page.waitForFunction(()=>{const c=document.querySelector('feiniu-music-card'),s=c.shadowRoot,img=s.querySelector('.compact-background img.visible');return img?.naturalWidth>0&&Number(getComputedStyle(img).opacity)>.71&&getComputedStyle(s.querySelector('.lyric-panel')).opacity==='1';});
     await first.screenshot({path:'artifacts/card-preview/compact-lyrics-dark.png'});
-    const visibleLines=await first.locator('.lyric-row').evaluateAll(rows=>{const box=rows[0].parentElement.getBoundingClientRect();return rows.filter(row=>{const r=row.getBoundingClientRect();return r.top+r.height/2>box.top&&r.top+r.height/2<box.bottom;}).length;});
-    assert(visibleLines>=3,'Reclaimed toolbar row leaves room for surrounding lyrics');
+    for(const width of [320,420,700]){
+      await page.setViewportSize({width,height:850});
+      await page.waitForFunction(()=>{const r=document.querySelector('feiniu-music-card').shadowRoot,b=r.querySelector('#lyric-lines').getBoundingClientRect(),p=r.querySelector('.lyric-row.current p').getBoundingClientRect();return Math.abs(p.top+p.height/2-b.top-b.height/2)<1;});
+      const visible=await first.locator('.lyric-row').evaluateAll(rows=>{const box=rows[0].parentElement.getBoundingClientRect();return rows.map(row=>{const r=row.querySelector('p').getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,blur:parseFloat(row.style.getPropertyValue('--lyric-blur')),opacity:parseFloat(row.style.getPropertyValue('--lyric-opacity'))};}).filter(r=>r.top>=box.top&&r.bottom<=box.bottom);});
+      assert.equal((await first.boundingBox()).height,400);
+      assert.equal(visible.length,5,'Five complete short lines fit, not just five clipped line centres');
+      assert(visible.every(r=>r.height===24&&r.opacity>=.46),'Outer short lines retain visible text at the original font size');
+      assert(visible[0].blur>visible[1].blur&&visible[1].blur>visible[2].blur&&visible[2].blur===0&&visible[4].blur>visible[3].blur,'Blur increases gradually on both sides of the centre');
+      await first.screenshot({path:`artifacts/card-preview/compact-five-lines-${width}.png`});
+    }
+    const edge=first.locator('.lyric-row').nth(1);
+    await edge.hover();
+    await page.waitForFunction(()=>{const p=document.querySelector('feiniu-music-card').shadowRoot.querySelectorAll('.lyric-row p')[1],s=getComputedStyle(p);return s.filter==='blur(0px)'&&s.opacity==='1';});
+    await page.mouse.move(0,0);
+    const oldBlur=await edge.evaluate(e=>parseFloat(e.style.getPropertyValue('--lyric-blur')));
+    await first.locator('#lyric-lines').evaluate(e=>{e.scrollTop+=4;});
+    await page.waitForFunction(old=>parseFloat(document.querySelector('feiniu-music-card').shadowRoot.querySelectorAll('.lyric-row')[1].style.getPropertyValue('--lyric-blur'))>old,oldBlur);
+    const newBlur=await edge.evaluate(e=>parseFloat(e.style.getPropertyValue('--lyric-blur')));
+    assert(newBlur-oldBlur<.2,'A small scroll updates blur smoothly instead of toggling a visibility threshold');
+    await page.setViewportSize({width:410,height:850});
+    await first.evaluate(c=>c._centreLyric(c._lastLine));
     assert.equal(await first.locator('.shell').evaluate(e=>getComputedStyle(e,'::after').backdropFilter),'blur(80px)');
     assert.equal(await first.locator('#compact-toggle,#compact-artwork').count(),0,'There is no duplicate cover or cover/lyrics switch');
     await first.evaluate(c=>{hass.states[c._config.entity].attributes.entity_picture='/cover.svg?i=3';c.hass=hass;});
