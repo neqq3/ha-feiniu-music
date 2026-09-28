@@ -36,6 +36,8 @@ main.main{grid-column:2;grid-row:2;overflow:auto;min-width:0;min-height:0;paddin
 #lyric-lines .lyric-seek{min-width:0;width:68px;min-height:32px;padding:5px 7px;gap:4px;border-radius:18px;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;opacity:0;pointer-events:none;background:var(--raised)}
 .lyric-seek feiniu-icon{--mdc-icon-size:12px}
 #lyric-lines:not(.timed){padding:0}#lyric-lines:not(.timed)>.empty{min-height:100%;display:grid;place-items:center}
+#lyric-lines .plain-lyrics{display:grid;gap:26px;padding:16px 0}#lyric-lines .plain-lyrics p{white-space:pre-wrap;min-height:1lh;opacity:1}
+@container(max-width:700px){#lyric-lines .plain-lyrics{gap:20px}}
 #lyric-lines p[role=button]{cursor:pointer;filter:blur(var(--lyric-blur,0px));transition:filter .16s ease,color .16s ease,opacity .16s ease;border-radius:4px}
 #lyric-lines .lyric-row:hover p,#lyric-lines .lyric-row:focus-within p,#lyric-lines .lyric-row.selected p{color:var(--text);opacity:1;filter:blur(0)}
 #lyric-lines p:focus-visible{outline:2px solid currentColor;outline-offset:3px}

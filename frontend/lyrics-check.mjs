@@ -95,9 +95,16 @@ export async function checkLyrics(page, first) {
     assert(await first.locator('.lyric-seek').evaluateAll(buttons=>buttons.every(b=>getComputedStyle(b).opacity==='0')),'Disabled seek buttons stay hidden in both landscape and portrait');
   }
   // Plain lyrics have no timing controls; pending manual-follow work is cleared on detach.
-  await page.evaluate(()=>{const c=document.querySelector('feiniu-music-card');c._lyrics=[];c._lyricText='Plain lyrics without timestamps';c._renderContent();});
+  await page.evaluate(()=>{const c=document.querySelector('feiniu-music-card');c._lyrics=[];c._lyricText=Array.from({length:47},(_,i)=>`An untimed verse ${i+1}`).join('\n');c._renderContent();});
   assert.equal(await first.locator('#lyric-tools').isVisible(),false);
   assert.equal(await first.locator('.lyric-seek').count(),0);
+  for(const width of [1280,390]){
+    await page.setViewportSize({width,height:960});
+    assert.equal(await first.locator('.plain-lyrics p').first().evaluate(e=>getComputedStyle(e).fontSize),width===1280?'28px':'19px');
+    await first.locator('#lyric-lines').hover();await page.mouse.wheel(0,250);
+    await page.waitForFunction(()=>document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines').scrollTop>100);
+    await first.screenshot({path:`artifacts/card-preview/player-plain-${width}.png`});
+  }
   await page.evaluate(()=>{const c=document.querySelector('feiniu-music-card');hass.states[c._config.entity]=window.lyricTestState;c.hass=hass;c._lyrics=window.lyricTestLines;c._renderContent();c._animate();});
   // Content fades/slides, but HA's grid and the artwork's dimensions never interpolate.
   const transitionCommands=await page.evaluate(()=>calls.length);

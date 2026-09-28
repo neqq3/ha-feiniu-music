@@ -5,7 +5,7 @@ import {CARD_FONT} from './card-font.js';
 import {CARD_BRAND} from './card-brand.js';
 import {COMPACT_CSS} from './card-compact.js';
 import './card-editor.js';
-export const VERSION = '0.3.0-compact-lyrics-clear';
+export const VERSION = '0.3.0-plain-lyrics';
 let fontReady;
 function loadCardFont(){
   if(!globalThis.FontFace||fontReady)return;
@@ -92,6 +92,7 @@ Object.assign(words.en, {browse:'Library', lyrics:'Now playing', queue:'Play que
   shuffleOn:'Shuffle play', shuffleOff:'Play in order', closeVolume:'Close volume',
   fullscreen:'Full screen', exitFullscreen:'Exit full screen', fullscreenError:'Full screen could not open. Try opening Home Assistant in a browser.',
   lyricEarlier:'Lyrics earlier by 0.5 s', lyricLater:'Lyrics later by 0.5 s', lyricCentre:'Centre this lyric without seeking', lyricSeek:'Play from', lyricSeekUnavailable:'This output cannot seek the current track', lyricReset:'Reset lyrics offset', lyricDefault:'Lyrics timing reset',
+  plainLyrics:'Untimed lyrics · Scroll to read; line seeking is unavailable',
   compactDetached:'External playback · Play to resume', compactFailed:'Playback failed · Play to retry', compactOffline:'Output offline', compactEmpty:'Choose music', compactWaiting:'Waiting for position', lyricWaiting:'Waiting for playback position',
   repeatOff:'Repeat off', repeatOne:'Repeat one', repeatAll:'Repeat all'});
 Object.assign(words.zh, {browse:'音乐库', lyrics:'正在播放', queue:'播放队列',
@@ -102,6 +103,7 @@ Object.assign(words.zh, {browse:'音乐库', lyrics:'正在播放', queue:'播�
   shuffleOn:'随机播放', shuffleOff:'顺序播放', closeVolume:'关闭音量',
   fullscreen:'全屏', exitFullscreen:'退出全屏', fullscreenError:'无法进入全屏，可尝试在浏览器中打开 Home Assistant。',
   lyricEarlier:'歌词提前 0.5 秒', lyricLater:'歌词延后 0.5 秒', lyricCentre:'居中此句歌词，不跳转播放', lyricSeek:'从此处播放', lyricSeekUnavailable:'当前输出无法定位这首歌', lyricReset:'重置歌词偏移', lyricDefault:'歌词偏移已恢复默认',
+  plainLyrics:'纯文本歌词 · 可手动滚动，无时间轴，不能按句跳转',
   compactDetached:'其他来源播放 · 点播放继续', compactFailed:'播放失败 · 点播放重试', compactOffline:'设备离线', compactEmpty:'等待选曲', compactWaiting:'等待播放进度', lyricWaiting:'等待播放进度',
   repeatOff:'循环关闭', repeatOne:'单曲循环', repeatAll:'列表循环'});
 // HA supplies the media class; category folders can be recognized by their media-source path.
@@ -603,12 +605,13 @@ export class FeiNiuMusicCard extends Base {
   _renderLyrics(){
     const key=[this._lyricKey,this._lyricStatus,this._lyricText,JSON.stringify(this._lyrics)].join('|');if(key===this._lyricsPaintKey)return;this._lyricsPaintKey=key;
     const box=this.$('lyric-lines');box.replaceChildren();box.classList.toggle('timed',this._lyrics.length>0);
+    const plain=!!this._lyricText&&!this._lyrics.length;box.title=plain?this.t('plainLyrics'):'';box.setAttribute('aria-label',this.t(plain?'plainLyrics':'lyricLabel'));box.scrollTop=0;
     if(this._lyrics.length){const requested=this._lyricKey;for(const [index,line] of this._lyrics.entries()){
       const row=document.createElement('div');row.className='lyric-row';const p=document.createElement('p');p.textContent=line.text;
       p.tabIndex=0;p.setAttribute('role','button');p.title=this.t('lyricCentre');p.onclick=()=>this._selectLyric(index);p.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this._selectLyric(index);}};
       const b=this._button('jump',()=>this._seekLyric(line,requested));b.className='lyric-seek';b.append(document.createElement('span'));row.append(p,b);box.append(row);
     }}
-    else if(this._lyricText){const p=document.createElement('pre');p.textContent=this._lyricText;box.append(p);}
+    else if(plain){const text=document.createElement('div');text.className='plain-lyrics';for(const line of this._lyricText.split(/\r?\n/)){const p=document.createElement('p');p.textContent=line;text.append(p);}box.append(text);}
     else box.append(this._empty(this.t(this._lyricStatus||'noLyrics')));this._lastLine=-1;this._renderLyricTools();this._queueLyricPaint(true);
   }
   _label(item){const key=String(item?.title||'').toLowerCase();return ['tracks','albums','artists','playlists'].includes(key)&&item?.media_class==='directory'?this.t(key):item?.title||this.t('browse');}

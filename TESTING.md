@@ -614,3 +614,18 @@ were added. No commit or push was performed for this local candidate.
   paths were found; credential URL matches are deliberate `test.invalid` fixtures.
   Candidate assets retain their existing notices; private research and runtime files
   are outside the repository. This is a pattern scan, not a blanket security guarantee.
+
+### Readable untimed lyrics (2026-09-28)
+
+- Untimed lyrics now use the same paragraph typography and spacing as timed lyrics:
+  16 px text in the compact card, with the existing 425 px total height. Blank lines
+  and wrapped text are preserved; plain lyrics have no invented timing controls.
+- Six frontend unit tests and the complete synthetic browser suite pass. A 47-line
+  fixture covers mouse-wheel scrolling, keyboard Home/End, a real browser touch
+  gesture, preserved scroll position during progress updates, and reset on song change.
+  Compact widths of 320/420/500 px and full-page landscape/portrait are checked.
+- The reported track's source was inspected read-only: its only lyric candidate
+  contains 47 plain-text lines and no timestamps. Automatic following and line seeking
+  cannot be provided for that source. Its text was not copied into the test fixtures.
+- Test HA serves the byte-identical new build. No playback command, HA restart or
+  integration reload was sent. No backend code changed.

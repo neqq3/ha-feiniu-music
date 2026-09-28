@@ -107,15 +107,37 @@ export async function checkCompactLyrics(sourcePage){
     await page.waitForFunction(()=>document.querySelector('feiniu-music-card')._lyricStatus==='noLyrics');
     await first.evaluate(c=>{c.setConfig({...c._config,compact_view:'auto'});c.hass=hass;});
 
-    await page.evaluate(()=>{lyricFixture={text:'Plain words\nWithout timestamps',synced_lines:[]};hass.states['media_player.feiniu_a'].attributes.playback_round++;document.querySelector('feiniu-music-card').hass=hass;});
+    await page.evaluate(()=>{lyricFixture={text:['Plain words','A longer line that wraps across the available space without being clipped','','<img src=x onerror=alert(1)>',...Array.from({length:43},(_,i)=>`Another quiet verse ${i+1}`)].join('\n'),synced_lines:[]};hass.states['media_player.feiniu_a'].attributes.playback_round++;document.querySelector('feiniu-music-card').hass=hass;});
     await page.waitForFunction(()=>document.querySelector('feiniu-music-card')._lyricText.startsWith('Plain'));
     assert(await first.locator('#compact-stage').isVisible(),'Auto displays available untimed lyrics without inventing synchronization');
-    assert(await first.locator('#lyric-lines pre').isVisible());assert.equal(await first.locator('.lyric-seek').count(),0);
+    assert(await first.locator('.plain-lyrics').isVisible());assert.equal(await first.locator('.lyric-seek').count(),0);
+    assert.equal(await first.locator('.plain-lyrics p').count(),47);
+    assert.equal(await first.locator('.plain-lyrics img,.plain-lyrics [role=button],.plain-lyrics .current').count(),0,'Untimed lines remain literal text without fake synchronization or seeking');
+    assert.equal(await first.locator('#lyric-tools').isVisible(),false);
+    assert((await first.locator('#lyric-lines').getAttribute('aria-label')).includes('纯文本'));
+    for(const width of [320,420,500]){
+      await page.setViewportSize({width,height:850});
+      assert(await first.locator('.plain-lyrics p').first().evaluate(e=>{const s=getComputedStyle(e);return s.fontSize==='16px'&&s.lineHeight==='25.6px';}),'Untimed lyrics use the same readable size as synchronized lyrics');
+      assert(await first.locator('.plain-lyrics p').nth(2).evaluate(e=>e.getBoundingClientRect().height>=25),'Blank verse separators are preserved');
+      assert(await first.locator('#lyric-lines').evaluate(e=>e.scrollHeight>e.clientHeight*5&&e.scrollWidth<=e.clientWidth),'Long plain lyrics wrap vertically without horizontal overflow');
+      await first.screenshot({path:`artifacts/card-preview/compact-plain-${width}.png`});
+    }
+    const plainBox=first.locator('#lyric-lines');
+    await plainBox.hover();await page.mouse.wheel(0,250);
+    await page.waitForFunction(()=>document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines').scrollTop>150);
+    await plainBox.focus();await page.keyboard.press('End');
+    await page.waitForFunction(()=>{const e=document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines');return Math.abs(e.scrollHeight-e.clientHeight-e.scrollTop)<2;});
+    const scrollPosition=await plainBox.evaluate(e=>e.scrollTop);
+    await first.evaluate(c=>{hass.states[c._config.entity].attributes.media_position++;c.hass=hass;c._animate();});
+    assert.equal(await plainBox.evaluate(e=>e.scrollTop),scrollPosition,'Progress updates leave manually scrolled plain lyrics in place');
+    await page.keyboard.press('Home');
+    await page.waitForFunction(()=>document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines').scrollTop===0);
+    await page.setViewportSize({width:410,height:850});
     assert.equal((await first.boundingBox()).height,height);
 
     for(const phase of ['loading','detached','failed']){
       await first.evaluate((c,phase)=>{hass.states[c._config.entity].attributes.session_phase=phase;c.hass=hass;},phase);
-      assert(await first.locator('#lyric-lines pre').isVisible());
+      assert(await first.locator('.plain-lyrics').isVisible());
       assert(await first.locator('#compact-status').isVisible());
       assert.equal(await first.locator('#compact-caption').count(),0,'No status strip overlays the lyrics');
       assert(await first.locator('#compact-status').evaluate(e=>{const r=e.getBoundingClientRect(),s=e.parentElement.querySelector('input').getBoundingClientRect(),a=e.parentElement.querySelector('#elapsed').getBoundingClientRect(),b=e.parentElement.querySelector('#duration').getBoundingClientRect();return r.top>s.bottom&&r.left>=a.left+30&&r.right<=b.right-30&&getComputedStyle(e).backgroundColor==='rgba(0, 0, 0, 0)';}));
@@ -222,5 +244,27 @@ export async function checkCompactLyrics(sourcePage){
     await card.locator('#lyricEarlier').tap();
     assert.deepEqual(await mobile.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').map(m=>m.lyric_offset)),[.5],'Left offset control sends only the display offset');
     assert.equal(await mobile.evaluate(()=>calls.length),services,'Adjusting the offset does not seek or change playback');
+    await mobile.evaluate(()=>{
+      lyricFixture={text:Array.from({length:47},(_,i)=>`An untimed verse ${i+1}`).join('\n'),synced_lines:[]};
+      const c=document.querySelector('feiniu-music-card');hass.states[c._config.entity].attributes.playback_round++;c.hass=hass;
+    });
+    await card.locator('.plain-lyrics').waitFor();
+    const area=await card.locator('#lyric-lines').boundingBox(),cdp=await touch.newCDPSession(mobile);
+    const x=area.x+area.width/2,y=area.y+area.height-20;
+    await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+    for(let step=1;step<=6;step++){
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y-step*20}]});
+      await mobile.evaluate(()=>new Promise(requestAnimationFrame));
+    }
+    await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await mobile.waitForFunction(()=>document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines').scrollTop>40);
+    assert.equal(await mobile.evaluate(()=>calls.length),services,'Swiping untimed lyrics scrolls locally without playback commands');
+    await mobile.evaluate(()=>{
+      lyricFixture={text:'A new song without timestamps',synced_lines:[]};
+      const c=document.querySelector('feiniu-music-card');hass.states[c._config.entity].attributes.playback_round++;c.hass=hass;
+    });
+    await mobile.waitForFunction(()=>document.querySelector('feiniu-music-card')._lyricText==='A new song without timestamps');
+    assert.equal(await card.locator('#lyric-lines').evaluate(e=>e.scrollTop),0,'A new untimed song starts at its first verse');
+    await cdp.detach();
   }finally{await touch.close();}
 }
