@@ -1,10 +1,28 @@
 # 飞牛音乐 · Home Assistant
 
-在 Home Assistant 中浏览飞牛音乐曲库，用已经接入 HA 的音箱播放。
+在 Home Assistant 中浏览飞牛音乐曲库，**通过已经接入 HA 的音箱播放音乐**。模仿飞牛音乐网页的风格制作。
 
-自带音乐库、播放队列和歌词卡片。每台音箱都有独立队列，可以分别播放不同的音乐；也可以不用卡片，直接使用 HA 原生媒体浏览和自动化。
+既可以作为仪表盘上的紧凑卡片，也可以在 HA 中单独做成一个完整的音乐页面。支持电脑横屏、手机和平板竖屏，歌曲播放页还可以进入全屏。
 
-使用普通飞牛音乐账号连接，无需 Music Assistant 或 NAS 管理员权限。本项目为非官方集成，不修改 NAS 上的曲库和歌单。
+集成同时提供 HA 原生媒体源（`media_source`），不使用卡片也能浏览曲库、选择音乐并用于自动化。每台飞牛播放器都有独立队列，可以分别播放不同的音乐。
+
+使用普通飞牛音乐账号连接，**支持同时接入多个飞牛音乐账号**。本项目为非官方集成，不修改 NAS 上的曲库和歌单。
+
+## 独立音乐页面、横竖屏与全屏
+
+选择**完整界面**，搭配 HA 的面板视图，就能在浏览器中把它作为一个独立的音乐网页使用：左侧浏览歌曲、专辑、歌手和歌单，底部保留播放器。
+
+![飞牛音乐的专辑音乐库](docs/images/music-library.png)
+
+<p align="center"><sub>完整音乐页面：独占一个 HA 面板视图，在浏览器中浏览曲库和控制播放。</sub></p>
+
+打开歌曲播放页，可以一边听歌一边看歌词，背景会随封面变化。**横屏**时封面与歌词左右排列；**竖屏**时自动切换为上下布局，适合手机和竖放的平板。
+
+在支持全屏的浏览器中，点击歌曲播放页右上角的**全屏按钮**，即可让播放界面铺满屏幕。完整音乐页面和从卡片展开的播放弹窗都支持这一操作。
+
+![歌曲播放页与同步歌词](docs/images/now-playing.jpg)
+
+<p align="center"><sub>完整界面的横屏歌曲播放页：封面与歌词左右排列，右上角可进入全屏。</sub></p>
 
 ## 安装
 
@@ -27,15 +45,41 @@
 
 配置完成后，每台选中的音箱会对应一个飞牛播放器实体。打开它的“浏览媒体”，即可按歌曲、专辑、歌手或歌单选曲。
 
+需要接入其他账号时，再次添加 **FeiNiu Music** 集成并登录另一个账号即可，多个账号可以同时保留和使用。
+
 要使用播放队列，请操作这个**飞牛播放器实体**。直接通过原始音箱实体浏览飞牛媒体源时，只会播放所选单曲。
+
+## HA 原生媒体源（media_source）
+
+集成也会在 HA 的 **媒体（Media sources）** 中提供 **FeiNiu Music** 入口。选择账号后，可以按歌曲、专辑、歌手和歌单浏览曲库，也支持搜索。
+
+![Home Assistant 原生媒体源中的 FeiNiu Music](docs/images/media-source.png)
+
+<p align="center"><sub>HA 原生媒体源：FeiNiu Music 与其他媒体源一起出现在媒体浏览器中。</sub></p>
+
+不使用我们的卡片也能从原生媒体浏览器选曲，或在自动化的“播放媒体”动作中选择飞牛音乐。要使用本集成的独立队列和自动续播，请将目标设为集成创建的飞牛播放器实体。
 
 ## 添加音乐卡片
 
 卡片随集成安装并自动注册，无需另外下载或手动添加 JavaScript 资源。
 
-配置好集成后，刷新 HA 页面，在仪表盘的“添加卡片”中选择 **FeiNiu Music**，再用可视化编辑器选择飞牛播放器和喜欢的外观即可。卡片会随集成一起更新。
+配置好集成后，刷新 HA 页面，在仪表盘的“添加卡片”中选择 **FeiNiu Music**，再用可视化编辑器设置播放器和喜欢的外观。卡片会随集成一起更新。
 
-也可以使用 YAML，将 `entity` 换成自己的飞牛播放器实体：
+**播放器必须选择本集成为目标音箱生成的对应飞牛播放器实体，不能直接选择原始音箱或其他任意播放器实体。** 接入多个账号时，请选所需账号下对应音箱的飞牛播放器；实际声音由已接入 HA 的音箱播放。
+
+日常控制可以用精简播放器。
+
+![精简播放器卡片](docs/images/compact-player.png)
+
+<p align="center"><sub>精简播放器：适合放在日常仪表盘上的紧凑卡片。</sub></p>
+
+想在卡片里看歌词，可以切换成歌词播放器，或选择自动模式。展示方式、背景和配色都能在可视化编辑器中调整。
+
+![可视化编辑器与紧凑歌词卡片预览](docs/images/card-editor.png)
+
+<p align="center"><sub>可视化编辑器：选择展示模式、歌词内容、背景和配色。</sub></p>
+
+也可以使用 YAML，将 `entity` 换成**集成生成的、对应音箱的飞牛播放器实体 ID**：
 
 ```yaml
 type: custom:feiniu-music-card
@@ -72,16 +116,49 @@ lovelace:
 
 背景可以选择固定底色或随封面变化的氛围色；封面氛围下还可以选择柔和蒙版或通透玻璃。
 
-点击封面进入歌曲播放页，右上角的展开按钮打开音乐库，队列按钮打开播放队列。
+点击紧凑卡片的封面，会在弹窗中打开歌曲播放页；点击右上角的展开按钮，则在弹窗中打开音乐库。队列按钮用于查看播放队列。
 
-如果想单独做一个音乐页面，选择**完整界面**，并搭配 HA 的面板视图（`panel`）使用。完整配置示例见 [dashboard.yaml](examples/dashboard.yaml)。
+![从紧凑卡片打开的歌曲播放弹窗](docs/images/card-player-dialog.png)
+
+<p align="center"><sub>歌曲播放弹窗：点击紧凑卡片封面展开，无需离开当前仪表盘，也可进一步进入全屏。</sub></p>
+
+![从紧凑卡片打开的音乐库弹窗](docs/images/card-library-dialog.png)
+
+<p align="center"><sub>音乐库弹窗：从紧凑卡片右上角展开，浏览歌曲、专辑、歌手和歌单。</sub></p>
+
+### 单独创建完整音乐页面
+
+在 HA 中新建一个视图，将视图类型设为**面板**，添加飞牛音乐卡片，并在可视化编辑器中选择**完整界面 · 音乐页面**。这样音乐库会直接占据整个视图，不需要先从小卡片打开弹窗。
+
+**完整音乐页面同样需要选择集成生成的、对应音箱的飞牛播放器实体，不能直接绑定原始音箱或其他任意播放器实体。** 多账号时选择所需账号下的对应播放器，音乐仍通过已接入 HA 的音箱播放。
+
+使用 YAML 配置视图时，可以参考下面的写法，并将 `entity` 替换为这个飞牛播放器实体 ID：
+
+```yaml
+title: 飞牛音乐
+path: music
+type: panel
+cards:
+  - type: custom:feiniu-music-card
+    entity: media_player.your_feiniu_output
+    display_mode: full
+```
+
+横竖屏布局会随可用宽度自动调整，不需要分别配置两张卡片。包含紧凑卡片和完整页面的仪表盘示例见 [dashboard.yaml](examples/dashboard.yaml)。
 
 ### 歌词与队列
 
-- 支持同步歌词和纯文本歌词。同步歌词可以点击文字居中，点击右侧时间按钮从那一句开始播放；纯文本歌词可以手动滚动阅读，但没有时间轴，不能自动跟随播放或按句跳转。
-- 歌词不同步时，可以用提前／延后按钮调整，也可以在“播放与歌词设置”中输入偏移量。
-- 队列支持追加、下一首播放、调整顺序、移除、随机和循环。这里的操作只影响播放队列，不会修改 NAS 歌单。
-- 重启 HA 后会保留队列，点击播放即可继续；能否恢复到之前的进度取决于音箱是否支持定位。
+同步歌词可以手动滚动查看。点击文字会将那一句居中，点击右侧时间按钮才会跳转播放。歌词不同步时，可以用提前／延后按钮调整，也可以在“播放与歌词设置”中输入偏移量。
+
+纯文本歌词也能手动滚动阅读，但没有时间轴，不能自动跟随播放或按句跳转。
+
+在宽屏歌曲播放页，点击右下角按钮即可展开播放队列。每台音箱有自己的队列，支持追加、下一首播放、调整顺序、移除、随机和循环，操作不会修改 NAS 歌单。
+
+![歌曲播放页右侧的独立播放队列](docs/images/play-queue.jpg)
+
+<p align="center"><sub>播放队列：在宽屏歌曲播放页右侧展开，每台音箱独立管理。</sub></p>
+
+重启 HA 后会保留队列，点击播放即可继续；能否恢复到之前的进度取决于音箱是否支持定位。
 
 ## 音箱设置
 
@@ -96,7 +173,7 @@ lovelace:
 ## 常见问题
 
 - **登录方式**：目前使用普通飞牛音乐账号登录，暂不支持 FN ID 和 NAS OAuth。
-- **实体选择**：卡片应选择集成创建的飞牛播放器，而不是原始音箱实体。
+- **实体选择**：紧凑卡片和完整音乐页面都应选择集成为对应音箱创建的飞牛播放器，而不是原始音箱实体。
 - **无法跳转进度**：需要音箱及其 HA 集成支持定位。歌词时间按钮也使用同一能力。
 - **更新后还是旧样式**：更新集成并重启 HA 后，刷新浏览器。资源版本会自动更新；使用 YAML 管理资源时需自行修改 `v` 参数。
 
@@ -108,10 +185,18 @@ lovelace:
 
 项目使用 [Apache-2.0](LICENSE) 许可证。字体、品牌图案及代码来源说明见 [NOTICE](NOTICE)。
 
-## English
+## English overview
 
-An unofficial Home Assistant integration for FeiNiu Music. Browse your library, play through existing HA speakers, and manage a separate queue for each output. An optional dashboard card adds music browsing, playback controls and lyrics.
+An unofficial Home Assistant integration for FeiNiu Music. Browse your library, **play through speakers already connected to Home Assistant**, and manage a separate queue for each output. **Multiple FeiNiu Music accounts can be connected at the same time**; add the integration again for each additional account. The integration also provides a native HA media source (`media_source`) for media browsing and automations without the custom card.
 
-Add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Then add the integration under **Settings → Devices & services**, sign in with a regular music account, and select your speakers.
+To use the integration's queue and automatic track advancement through the native media browser or automations, target the generated FeiNiu player. Playing through the underlying speaker entity directly plays only the selected track. Your NAS library and playlists are not modified.
 
-The bundled card registers and updates automatically. After setting up the integration, refresh your browser and add a **FeiNiu Music** card through the visual editor. Only YAML-managed dashboard resources require the manual resource entry above. Use the FeiNiu player entity, rather than the underlying speaker. See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.
+Use the bundled card as a compact dashboard player, open its library and lyrics in a popup, or dedicate an HA panel view to the full music interface. It adapts to landscape and portrait layouts, with full-screen playback available in supported browsers.
+
+The compact card offers simple, lyrics, and automatic modes. Automatic mode shows lyrics when available and collapses to the simple player otherwise; lyrics mode keeps the lyrics area and shows a message when lyrics are unavailable. Backgrounds and appearance are configurable in the visual editor.
+
+Requires **Home Assistant 2026.9.4 or newer**. Connect your speakers to HA first, then add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Add the integration under **Settings → Devices & services**, sign in with a regular FeiNiu Music account, and select your speakers. FN ID and NAS OAuth are not supported.
+
+The bundled card registers and updates automatically. After setting up the integration, refresh your browser and add a **FeiNiu Music** card through the visual editor. Only YAML-managed dashboard resources require the manual resource entry above. **Both compact cards and full music pages must use the FeiNiu player entity created by this integration for the chosen account and speaker—not an arbitrary media player or the underlying speaker entity.** See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.
+
+Startup and track-end behavior can be configured separately for each FeiNiu player in the integration's options, without installing the card. Seeking and audio format support depend on the speaker and its HA integration; this integration does not transcode audio.
