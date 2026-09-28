@@ -2,7 +2,7 @@
 
 在 Home Assistant 中浏览飞牛音乐曲库，用已经接入 HA 的音箱播放。
 
-自带音乐库、播放队列和歌词卡片。每台音箱都有独立队列，可以分别播放不同的音乐；也可以不装卡片，直接使用 HA 原生媒体浏览和自动化。
+自带音乐库、播放队列和歌词卡片。每台音箱都有独立队列，可以分别播放不同的音乐；也可以不用卡片，直接使用 HA 原生媒体浏览和自动化。
 
 使用普通飞牛音乐账号连接，无需 Music Assistant 或 NAS 管理员权限。本项目为非官方集成，不修改 NAS 上的曲库和歌单。
 
@@ -31,15 +31,9 @@
 
 ## 添加音乐卡片
 
-卡片已经包含在集成中，无需另外下载。
+卡片随集成安装并自动注册，无需另外下载或手动添加 JavaScript 资源。
 
-开启 HA 用户设置中的“高级模式”，在 **设置 → 仪表盘 → 资源** 添加以下资源，类型选择 **JavaScript 模块**：
-
-```text
-/feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-clear
-```
-
-回到仪表盘，添加 **FeiNiu Music** 卡片，在可视化编辑器中选择飞牛播放器和喜欢的外观即可。
+配置好集成后，刷新 HA 页面，在仪表盘的“添加卡片”中选择 **FeiNiu Music**，再用可视化编辑器选择飞牛播放器和喜欢的外观即可。卡片会随集成一起更新。
 
 也可以使用 YAML，将 `entity` 换成自己的飞牛播放器实体：
 
@@ -53,6 +47,18 @@ compact_background: artwork
 compact_mask: soft
 theme: dark
 ```
+
+如果你使用 YAML 管理仪表盘**资源**（`resource_mode: yaml`），需要自行在 `configuration.yaml` 的 `lovelace.resources` 中添加下面这项；已有 `lovelace` 配置时合并进去：
+
+```yaml
+lovelace:
+  resource_mode: yaml
+  resources:
+    - url: /feiniu_music/feiniu-music-card.js?v=0.2.2
+      type: module
+```
+
+只有资源由 YAML 管理时需要这一步，卡片配置使用 YAML 不受影响。升级后相应修改 `v` 参数并重载资源。
 
 ### 选择展示方式
 
@@ -92,7 +98,7 @@ theme: dark
 - **登录方式**：目前使用普通飞牛音乐账号登录，暂不支持 FN ID 和 NAS OAuth。
 - **实体选择**：卡片应选择集成创建的飞牛播放器，而不是原始音箱实体。
 - **无法跳转进度**：需要音箱及其 HA 集成支持定位。歌词时间按钮也使用同一能力。
-- **更新后还是旧样式**：刷新浏览器；如果仍有缓存，可以修改卡片资源地址中的 `v` 参数后再刷新。
+- **更新后还是旧样式**：更新集成并重启 HA 后，刷新浏览器。资源版本会自动更新；使用 YAML 管理资源时需自行修改 `v` 参数。
 
 升级集成前建议备份 HA。更多操作说明见 [使用说明](EXPERIENCE.md)；遇到问题可以到 [Issues](https://github.com/neqq3/ha-feiniu-music/issues) 反馈，附上 HA 版本、飞牛音乐版本、音箱型号和具体操作步骤。
 
@@ -108,4 +114,4 @@ An unofficial Home Assistant integration for FeiNiu Music. Browse your library, 
 
 Add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Then add the integration under **Settings → Devices & services**, sign in with a regular music account, and select your speakers.
 
-Register the card resource shown above as a JavaScript module, then add a **FeiNiu Music** card through the visual editor. Use the FeiNiu player entity, rather than the underlying speaker. See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.
+The bundled card registers and updates automatically. After setting up the integration, refresh your browser and add a **FeiNiu Music** card through the visual editor. Only YAML-managed dashboard resources require the manual resource entry above. Use the FeiNiu player entity, rather than the underlying speaker. See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.

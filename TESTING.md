@@ -1,4 +1,15 @@
-# Verification — artwork delivery candidate 0.2.1
+# Verification
+
+## Automatic card registration — 0.2.2
+
+- HA 2026.9.4 regression suite: **316 passed**, including eight resource registration tests.
+  Fresh HTTP delivery, content-based updates, repeat setup, multiple accounts/reload,
+  YAML resource ownership and registration failure isolation are covered.
+- Ruff lint/format passed; mypy passed for 24 source files. The frontend bundle is unchanged.
+- Test HA recreated its removed card resource on restart and served the exact bundle.
+  A fresh browser page rendered the card. Existing dashboards and other resources were unchanged.
+  Playback changed during verification; its queue snapshot was not treated as a preservation check.
+  The deployment/verification sent no audio service calls.
 
 ## Artwork and browse checks (2026-09-28)
 

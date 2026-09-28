@@ -2,7 +2,7 @@
 
 1. 在「设置 → 设备与服务 → 飞牛音乐 → 配置」选择已有的 HA 音频输出。
    每个账号与输出组合对应一个固定播放器；不要选择飞牛播放器自身或已包含它的组。
-2. 安装 README 的卡片资源，在仪表盘添加 FeiNiu Music，使用可视化编辑器选择飞牛播放器、
+2. 配置集成后刷新页面，在仪表盘添加 FeiNiu Music，使用可视化编辑器选择飞牛播放器、
    紧凑／完整模式、标题和配色。新增卡片默认深色紧凑、自动歌词；旧 YAML 未写 `display_mode` 时保留完整模式。
    紧凑内容可选精简、歌词、自动；歌词模式保留固定歌词区，自动模式有歌词时展开、无歌词时收起为精简播放器。
    背景独立选择：原默认背景与透明度，或随封面变色的氛围背景。后者可选柔和蒙版／通透玻璃，默认柔和蒙版。
@@ -45,7 +45,7 @@
 
 ## English
 
-Select outputs in integration options, register the card module, and replace entity IDs in
+Select outputs in integration options, refresh the browser for the automatically registered card, and replace entity IDs in
 `examples/dashboard.yaml`. Browse a list and play it, or add individual songs without starting
 an empty queue. Each fixed output owns its queue, occurrence IDs, repeat/shuffle and lyric offset.
 Reload restores queues idle; explicit Play revalidates access and requests supported native resume.

@@ -1,7 +1,5 @@
 """Native, read-only FeiNiu Music media source for Home Assistant."""
 
-from pathlib import Path
-
 import voluptuous as vol
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
@@ -12,6 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady,
 from .api import create_client
 from .client import AuthenticationError, FeiNiuError, NetworkError, ProtocolError, RateLimitError
 from .const import DOMAIN
+from .frontend import CARD_FILE, CARD_URL, async_register_card
 from .http import FeiNiuArtworkView, FeiNiuAudioView, FeiNiuImageView, FeiNiuSessionAudioView
 from .media import valid_id
 from .runtime import FeiNiuConfigEntry, FeiNiuRuntime
@@ -30,12 +29,13 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
-                "/feiniu_music/feiniu-music-card.js",
-                str(Path(__file__).parent / "www" / "feiniu-music-card.js"),
+                CARD_URL,
+                str(CARD_FILE),
                 True,
             )
         ]
     )
+    await async_register_card(hass)
 
     async def lyrics(call: ServiceCall) -> dict:
         runtime = hass.data[DOMAIN]["entries"].get(call.data["entry_id"])

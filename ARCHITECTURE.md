@@ -23,6 +23,8 @@
 - `selection.py`: native media-browser context and complete fresh queue selection.
 - `websocket.py`: authenticated paged queue/edit/lyrics/preferences commands. Entity/output permission
   checks, occurrence IDs and revisions; no full queue or lyrics in Recorder/state attributes.
+- `frontend.py`: registers the bundled card once in Lovelace resource storage after frontend setup.
+  The bundle hash updates its cache key in place. YAML-managed resources remain user-managed.
 - `frontend/feiniu-music-card.js`: dependency-free web component. HA-native browse/search/actions,
   backend-authoritative queues and local display-only timeline/lyrics animation. Built file under `www`.
   Queue occurrence IDs retain row/image nodes across refresh; browse thumbnails use the same HA route.

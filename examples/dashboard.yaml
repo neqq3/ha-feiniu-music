@@ -1,4 +1,5 @@
-# Register /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-clear as a JavaScript module first.
+# The integration registers the card automatically. Refresh HA after setup.
+# For YAML-managed resources, see README.md before using this dashboard.
 # Replace these entity IDs with the fixed FeiNiu entities created from selected outputs.
 title: FeiNiu Music
 views:
