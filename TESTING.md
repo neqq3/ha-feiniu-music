@@ -576,3 +576,14 @@ were added. No commit or push was performed for this local candidate.
   Frontend unit tests: **6 passed**. Screenshots include short and wrapped examples.
 - Test HA serves byte-identical deployed JavaScript. No playback command, integration
   reload or HA restart was sent. Backend tests were not rerun for this frontend change.
+
+### Restore lyric spacing at 425 px (2026-09-28)
+
+- `0.3.0-compact-lyrics-425` increases only the lyric region by 25 px (164 to 189 px),
+  bringing the rich card to 425 px. The 16 px font is unchanged; line height returns
+  from 24 to 25.6 px and the gap between lyrics returns from 8 to 12 px.
+- The full browser suite passed. At 320/420/700 px widths, five complete short lines
+  fit using the restored spacing. Progressive blur, hover clarity, long lines and
+  separate offset/seek controls remain covered. Simple player dimensions are unchanged.
+- Test HA serves the exact new build. The update sent no playback command and needed
+  no integration reload or HA restart. No backend code changed.

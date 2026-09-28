@@ -17,10 +17,10 @@ export async function checkCompactLyrics(sourcePage){
     });
     await first.locator('.lyric-row.current').waitFor();
     const height=(await first.boundingBox()).height;
-    assert.equal(height,400,'Rich compact card has the requested total height');
+    assert.equal(height,425,'Rich compact card has the requested total height');
     assert.equal(Math.round((await first.locator('.compact-heading').boundingBox()).height),32,'Header really shrinks by 14px instead of only changing text direction');
-    assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),164,'Added height goes to lyrics');
-    assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),164,'Offset toolbar consumes no lyric height');
+    assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),189,'Added height goes to lyrics');
+    assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),189,'Offset toolbar consumes no lyric height');
     assert(await first.evaluate(c=>c.getGridOptions().rows===8),'HA reserves enough grid space for the taller lyrics card');
     assert(await first.locator('.compact-labels').evaluate(e=>{const a=e.firstElementChild.getBoundingClientRect(),b=e.lastElementChild.getBoundingClientRect();return b.left>a.right&&Math.abs(a.bottom-b.bottom)<5;}),'Card and output names share one header line');
     assert.equal(await first.locator('.lyric-row.current p').textContent(),'Follows us home');
@@ -34,10 +34,10 @@ export async function checkCompactLyrics(sourcePage){
     for(const width of [320,420,700]){
       await page.setViewportSize({width,height:850});
       await page.waitForFunction(()=>{const r=document.querySelector('feiniu-music-card').shadowRoot,b=r.querySelector('#lyric-lines').getBoundingClientRect(),p=r.querySelector('.lyric-row.current p').getBoundingClientRect();return Math.abs(p.top+p.height/2-b.top-b.height/2)<1;});
-      const visible=await first.locator('.lyric-row').evaluateAll(rows=>{const box=rows[0].parentElement.getBoundingClientRect();return rows.map(row=>{const r=row.querySelector('p').getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,blur:parseFloat(row.style.getPropertyValue('--lyric-blur')),opacity:parseFloat(row.style.getPropertyValue('--lyric-opacity'))};}).filter(r=>r.top>=box.top&&r.bottom<=box.bottom);});
-      assert.equal((await first.boundingBox()).height,400);
+      const visible=await first.locator('.lyric-row').evaluateAll(rows=>{const box=rows[0].parentElement.getBoundingClientRect();return rows.map(row=>{const r=row.querySelector('p').getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,fontSize:parseFloat(getComputedStyle(row.querySelector('p')).fontSize),gap:parseFloat(getComputedStyle(row).marginBottom),blur:parseFloat(row.style.getPropertyValue('--lyric-blur')),opacity:parseFloat(row.style.getPropertyValue('--lyric-opacity'))};}).filter(r=>r.top>=box.top&&r.bottom<=box.bottom);});
+      assert.equal((await first.boundingBox()).height,425);
       assert.equal(visible.length,5,'Five complete short lines fit, not just five clipped line centres');
-      assert(visible.every(r=>r.height===24&&r.opacity>=.46),'Outer short lines retain visible text at the original font size');
+      assert(visible.every(r=>Math.abs(r.height-25.6)<.05&&r.fontSize===16&&r.gap===12&&r.opacity>=.46),'Five lines use the original 16px type, 25.6px line height and 12px spacing');
       assert(visible[0].blur>visible[1].blur&&visible[1].blur>visible[2].blur&&visible[2].blur===0&&visible[4].blur>visible[3].blur,'Blur increases gradually on both sides of the centre');
       await first.screenshot({path:`artifacts/card-preview/compact-five-lines-${width}.png`});
     }

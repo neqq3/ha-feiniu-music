@@ -5,7 +5,7 @@ import {CARD_FONT} from './card-font.js';
 import {CARD_BRAND} from './card-brand.js';
 import {COMPACT_CSS} from './card-compact.js';
 import './card-editor.js';
-export const VERSION = '0.3.0-compact-lyrics-400';
+export const VERSION = '0.3.0-compact-lyrics-425';
 let fontReady;
 function loadCardFont(){
   if(!globalThis.FontFace||fontReady)return;
