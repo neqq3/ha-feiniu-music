@@ -5,7 +5,7 @@ import {CARD_FONT} from './card-font.js';
 import {CARD_BRAND} from './card-brand.js';
 import {COMPACT_CSS} from './card-compact.js';
 import './card-editor.js';
-export const VERSION = '0.3.0-compact-lyrics-425';
+export const VERSION = '0.3.0-compact-lyrics-clear';
 let fontReady;
 function loadCardFont(){
   if(!globalThis.FontFace||fontReady)return;
@@ -439,10 +439,10 @@ export class FeiNiuMusicCard extends Base {
     const padding=`${available/2}px`;if(box.style.getPropertyValue('--lyric-pad')!==padding)box.style.setProperty('--lyric-pad',padding);
     if(this._lyricResized){this._lyricResized=false;if(!this._lyricsManual)this._centreLyric(this._lastLine);else if(this._selectedLyric!=null)this._centreLyric(this._selectedLyric);}
     const rect=box.getBoundingClientRect(),middle=rect.top+rect.height/2;
-    // Depth follows each row's actual scroll position, not a fixed visible-line cutoff.
+    // Compact lyrics stay sharp; full-page blur and shared fading follow scroll position.
     // Batch geometry reads before writing styles to avoid repeated layout work.
     const compact=this._compactHome;
-    const values=[...box.querySelectorAll('.lyric-row')].map(row=>{const r=row.getBoundingClientRect(),distance=Math.abs(r.top+r.height/2-middle)/(rect.height/2);return [row,`${Math.max(0,Math.min(compact?2.6:4,(distance-(compact ? .12 : .25))*(compact?2.6:5))).toFixed(2)}px`,compact?Math.max(.46,.8-distance*.3).toFixed(3):''];});
+    const values=[...box.querySelectorAll('.lyric-row')].map(row=>{const r=row.getBoundingClientRect(),distance=Math.abs(r.top+r.height/2-middle)/(rect.height/2);return [row,`${compact?0:Math.max(0,Math.min(4,(distance-.25)*5)).toFixed(2)}px`,compact?Math.max(.46,.8-distance*.3).toFixed(3):''];});
     for(const [row,blur,opacity] of values){
       if(row.style.getPropertyValue('--lyric-blur')!==blur)row.style.setProperty('--lyric-blur',blur);
       if(row.style.getPropertyValue('--lyric-opacity')!==opacity)row.style.setProperty('--lyric-opacity',opacity);

@@ -28,7 +28,7 @@
 设置 → 仪表盘 → 资源中添加（需开启用户高级模式）：
 
 ```yaml
-url: /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-425
+url: /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-clear
 type: module
 ```
 
@@ -57,7 +57,7 @@ theme: dark
 纯文本歌词直接显示，不模拟同步滚动；不提供额外的封面／歌词切换按钮，也不重复放大封面。
 歌词播放器卡片总高 425 像素，歌词区 189 像素；短句可同时显示当前句和上下各两句，长句换行时可见句数会减少。
 歌词字号 16 像素，行高 25.6 像素，句间距 12 像素，保持原先较舒展的排版。
-模糊与淡化随歌词距离中心的位置连续变化，只有最外沿用于淡出；悬停、聚焦或选中的句子恢复清晰。
+紧凑卡片的所有歌词保持清晰，仅保留淡化与最外沿淡出；悬停、聚焦或选中的句子会提亮。
 歌词文字点选与时间跳转沿用完整播放页；顶部卡片名与音箱名合并为一行，省出的高度留给歌词；偏移快捷按钮位于歌词左侧独立区域，不占额外一行，与右侧时间按钮分开。
 旧紧凑卡片未填 `compact_view` 时保留精简模式。点击封面打开播放／歌词界面，右上角展开按钮
 打开音乐库，队列按钮打开队列；它们共用同一个弹层和播放器，关闭不会停止播放。
@@ -179,7 +179,7 @@ an independent queue; the original `media_source` remains available for direct s
 No Music Assistant, bridge, NAS administrator access, external database or transcoding service is required.
 
 Install `custom_components/feiniu_music`, restart HA, add the integration and select outputs.
-Register `/feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-425` as a Lovelace JavaScript module and add
+Register `/feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-clear` as a Lovelace JavaScript module and add
 `type: custom:feiniu-music-card` with the fixed FeiNiu `entity` ID. The visual editor selects the
 player, display mode, compact content, title and colors. New picker cards default to
 `display_mode: compact`, `compact_view: auto`, `compact_background: artwork`, `compact_mask: soft`, and dark colors.
@@ -191,8 +191,8 @@ YAML without `compact_view` keeps the simple player. The independent background 
 `compact_mask: soft` (default soft veil) or `glass` (translucent glass) available for artwork.
 The 425 px lyrics card devotes 189 px to lyrics, fitting the current short line and two on each
 side; wrapped lyrics show fewer entries. Lyrics retain 16 px type, 25.6 px line height and 12 px
-spacing between entries. Blur and opacity vary continuously with distance from
-the centre, with a fade at the outer edge. Hover, focus and selection restore clear text.
+spacing between entries. Compact lyrics remain sharp at every position, with subtle opacity
+changes and a fade at the outer edge. Hover, focus and selection brighten the text.
 The single-line header saves space for lyrics. Offset controls sit on the left, separate from
 timestamps on the right. The simple player retains its compact size.
 Legacy YAML without `display_mode` keeps the full interface. Compact cards expand into a shared

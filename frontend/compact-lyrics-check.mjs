@@ -38,18 +38,17 @@ export async function checkCompactLyrics(sourcePage){
       assert.equal((await first.boundingBox()).height,425);
       assert.equal(visible.length,5,'Five complete short lines fit, not just five clipped line centres');
       assert(visible.every(r=>Math.abs(r.height-25.6)<.05&&r.fontSize===16&&r.gap===12&&r.opacity>=.46),'Five lines use the original 16px type, 25.6px line height and 12px spacing');
-      assert(visible[0].blur>visible[1].blur&&visible[1].blur>visible[2].blur&&visible[2].blur===0&&visible[4].blur>visible[3].blur,'Blur increases gradually on both sides of the centre');
+      assert(visible.every(r=>r.blur===0),'Every compact lyric remains sharp, including the outer lines');
       await first.screenshot({path:`artifacts/card-preview/compact-five-lines-${width}.png`});
     }
     const edge=first.locator('.lyric-row').nth(1);
     await edge.hover();
     await page.waitForFunction(()=>{const p=document.querySelector('feiniu-music-card').shadowRoot.querySelectorAll('.lyric-row p')[1],s=getComputedStyle(p);return s.filter==='blur(0px)'&&s.opacity==='1';});
     await page.mouse.move(0,0);
-    const oldBlur=await edge.evaluate(e=>parseFloat(e.style.getPropertyValue('--lyric-blur')));
+    const oldOpacity=await edge.evaluate(e=>parseFloat(e.style.getPropertyValue('--lyric-opacity')));
     await first.locator('#lyric-lines').evaluate(e=>{e.scrollTop+=4;});
-    await page.waitForFunction(old=>parseFloat(document.querySelector('feiniu-music-card').shadowRoot.querySelectorAll('.lyric-row')[1].style.getPropertyValue('--lyric-blur'))>old,oldBlur);
-    const newBlur=await edge.evaluate(e=>parseFloat(e.style.getPropertyValue('--lyric-blur')));
-    assert(newBlur-oldBlur<.2,'A small scroll updates blur smoothly instead of toggling a visibility threshold');
+    await page.waitForFunction(old=>parseFloat(document.querySelector('feiniu-music-card').shadowRoot.querySelectorAll('.lyric-row')[1].style.getPropertyValue('--lyric-opacity'))<old,oldOpacity);
+    assert(await first.locator('.lyric-row').evaluateAll(rows=>rows.every(r=>parseFloat(r.style.getPropertyValue('--lyric-blur'))===0)),'Scrolling never adds blur to compact lyrics');
     await page.setViewportSize({width:410,height:850});
     await first.evaluate(c=>c._centreLyric(c._lastLine));
     assert.equal(await first.locator('.shell').evaluate(e=>getComputedStyle(e,'::after').backdropFilter),'blur(80px)');

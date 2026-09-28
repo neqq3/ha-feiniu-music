@@ -587,3 +587,19 @@ were added. No commit or push was performed for this local candidate.
   separate offset/seek controls remain covered. Simple player dimensions are unchanged.
 - Test HA serves the exact new build. The update sent no playback command and needed
   no integration reload or HA restart. No backend code changed.
+
+### Clear compact lyrics and publication audit (2026-09-28)
+
+- `0.3.0-compact-lyrics-clear` removes compact lyric blur at every scroll position,
+  retaining subtle fading, 425 px total height, 16 px text and the restored spacing.
+  The CSS override also avoids residual blur when returning from the full-page view.
+- Six frontend unit tests and the complete synthetic browser suite pass, including
+  five complete short lines, long-line wrapping, hover, touch and independent seek
+  and offset controls. Full-page lyric behavior remains covered by its existing tests.
+- Test HA serves the exact new build; deployment sent no audio command and required
+  no restart. No backend code changed.
+- Before public publication, all fetched branches and reachable history were scanned
+  for credential patterns and private configuration paths. No live secrets or private
+  paths were found; credential URL matches are deliberate `test.invalid` fixtures.
+  Candidate assets retain their existing notices; private research and runtime files
+  are outside the repository. This is a pattern scan, not a blanket security guarantee.
