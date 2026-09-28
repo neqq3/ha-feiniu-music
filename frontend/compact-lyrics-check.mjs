@@ -18,8 +18,9 @@ export async function checkCompactLyrics(sourcePage){
     await first.locator('.lyric-row.current').waitFor();
     const height=(await first.boundingBox()).height;
     assert.equal(height,386,'Single-line header and left offset controls preserve the deployed total height');
-    assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),136);
-    assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),136,'Offset toolbar consumes no lyric height');
+    assert.equal(Math.round((await first.locator('.compact-heading').boundingBox()).height),32,'Header really shrinks by 14px instead of only changing text direction');
+    assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),150,'All 14px saved by the header go to the lyrics');
+    assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),150,'Offset toolbar consumes no lyric height');
     assert(await first.locator('.compact-labels').evaluate(e=>{const a=e.firstElementChild.getBoundingClientRect(),b=e.lastElementChild.getBoundingClientRect();return b.left>a.right&&Math.abs(a.bottom-b.bottom)<5;}),'Card and output names share one header line');
     assert.equal(await first.locator('.lyric-row.current p').textContent(),'Follows us home');
     assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/lyrics').length),1);
@@ -28,7 +29,7 @@ export async function checkCompactLyrics(sourcePage){
     assert.equal(await first.locator('.lyric-seek').evaluateAll(bs=>bs.filter(b=>Number(getComputedStyle(b).opacity)>0).length),0,'Pausing does not reveal every timestamp');
     assert.equal(await first.evaluate(c=>c._raf),0,'Paused cards do not keep an animation loop running');
     await page.waitForFunction(()=>{const c=document.querySelector('feiniu-music-card'),s=c.shadowRoot,img=s.querySelector('.compact-background img.visible');return img?.naturalWidth>0&&Number(getComputedStyle(img).opacity)>.71&&getComputedStyle(s.querySelector('.lyric-panel')).opacity==='1';});
-    await page.screenshot({path:'artifacts/card-preview/compact-lyrics-dark.png',fullPage:true});
+    await first.screenshot({path:'artifacts/card-preview/compact-lyrics-dark.png'});
     const visibleLines=await first.locator('.lyric-row').evaluateAll(rows=>{const box=rows[0].parentElement.getBoundingClientRect();return rows.filter(row=>{const r=row.getBoundingClientRect();return r.top+r.height/2>box.top&&r.top+r.height/2<box.bottom;}).length;});
     assert(visibleLines>=3,'Reclaimed toolbar row leaves room for surrounding lyrics');
     assert.equal(await first.locator('.shell').evaluate(e=>getComputedStyle(e,'::after').backdropFilter),'blur(80px)');
@@ -128,6 +129,7 @@ export async function checkCompactLyrics(sourcePage){
       await page.setViewportSize({width,height:850});
       await page.mouse.move(0,0);
       assert.equal((await first.boundingBox()).height,height,'Width changes preserve the rich card height');
+      assert(await first.evaluate(c=>{const r=c.shadowRoot,h=r.querySelector('.compact-heading').getBoundingClientRect(),b=r.querySelector('#compact-open button').getBoundingClientRect(),l=r.querySelector('.compact-labels').getBoundingClientRect(),i=r.querySelector('.mini-info').getBoundingClientRect();return h.height===32&&b.width===34&&b.height===34&&l.right+8<=b.left&&b.bottom<i.top;}),'Shorter header keeps the full expand target clear of labels and artwork');
       assert(await first.evaluate(c=>c.shadowRoot.querySelector('.shell').scrollWidth<=c.clientWidth+1));
       assert(await first.locator('#controls button:not([hidden]),#dock-tools>button.queue-toggle,#volume-toggle').evaluateAll(bs=>bs.filter(b=>b.getBoundingClientRect().width).every(b=>{const r=b.getBoundingClientRect();return Math.abs(r.width-r.height)<.5&&getComputedStyle(b).borderRadius==='50%';})),'Transport hit areas and focus outlines stay circular at every compact width');
       await first.locator('#volume-toggle').click();
@@ -142,7 +144,7 @@ export async function checkCompactLyrics(sourcePage){
       await first.locator('.lyric-row.current p').click();
       const seek=first.locator('.lyric-row.selected .lyric-seek');await seek.hover();
       assert(await seek.evaluate(b=>{const r=b.getBoundingClientRect();return b.contains(b.getRootNode().elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'Timestamp remains the clickable target while offset buttons are visible');
-      await page.screenshot({path:`artifacts/card-preview/compact-lyrics-${width}.png`,fullPage:true});
+      await first.screenshot({path:`artifacts/card-preview/compact-lyrics-${width}.png`});
     }
     await page.setViewportSize({width:410,height:850});
     await first.evaluate(c=>{c.setConfig({...c._config,theme:'light',compact_view:'lyrics'});c.hass=hass;});

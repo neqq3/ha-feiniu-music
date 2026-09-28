@@ -547,3 +547,17 @@ were added. No commit or push was performed for this local candidate.
   real track had no lyrics; left-rail interactions were verified with synthetic lyrics.
   Preview changes were cancelled; no playback service call, HA restart or integration
   reload was sent. Backend tests were not rerun for these frontend changes.
+
+### Reclaim actual header space (2026-09-28)
+
+- `0.3.0-compact-layout-1` combined header text but still reserved a 34 px button row.
+  `0.3.0-compact-layout-2` gives the header a 20 px text row, while preserving the
+  expand button's 34 x 34 px hit target outside that row's flow.
+- Browser geometry checks confirm the padded header shrinks from 46 to 32 px and
+  the lyric viewport grows from 136 to 150 px; the total remains **386 px**. The
+  artwork and lyric region move up, leaving the transport and progress bar in place.
+- The complete synthetic browser suite passed, including 320/390/700 px widths,
+  long wrapped lyrics, isolated left/right controls and keyboard/touch interaction.
+  The expand target clears both header labels and artwork at each checked width.
+- Test HA serves byte-identical `0.3.0-compact-layout-2`. Deployment sent no playback
+  command and required no restart or integration reload. No backend code changed.
