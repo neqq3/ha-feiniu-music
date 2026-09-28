@@ -1,6 +1,7 @@
 """Configure a regular music account, without NAS administrator access."""
 
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import Any
 from uuid import uuid4
 
@@ -11,8 +12,13 @@ from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -22,7 +28,7 @@ from .api import create_client
 from .client import AuthenticationError, FeiNiuError, NetworkError, RateLimitError
 from .const import CONF_ACCOUNT_ID, CONF_DEVICE_ID, DOMAIN
 from .output import OutputBinding, validate_output
-from .players import CONF_OUTPUTS, bindings
+from .players import CONF_OUTPUTS, AccountPlayers, bindings
 from .runtime import normalize_url
 
 
@@ -195,10 +201,19 @@ def select_outputs(hass, entities: list[str], options: dict) -> list[dict[str, s
 
 
 class FeiNiuOptionsFlow(config_entries.OptionsFlow):
-    """Selection changes are applied incrementally without reloading the account."""
+    """Manage outputs and their saved playback profiles without reloading the account."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._output_key: str | None = None
+        self._profile_defaults: dict[str, Any] = {}
+
+    def _manager(self) -> AccountPlayers | None:
+        manager = self.hass.data.get(DOMAIN, {}).get("players", {}).get(self.config_entry.entry_id)
+        return manager if manager and not manager.closed else None
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
-        return await self.async_step_outputs(user_input)
+        return self.async_show_menu(step_id="init", menu_options=["outputs", "playback"])
 
     async def async_step_outputs(self, user_input=None) -> ConfigFlowResult:
         options = dict(self.config_entry.options)
@@ -214,4 +229,81 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
         ]
         return self.async_show_form(
             step_id="outputs", errors=errors, data_schema=output_schema(selected_ids)
+        )
+
+    async def async_step_playback(self, user_input=None) -> ConfigFlowResult:
+        """Select only proxies belonging to this account, including offline outputs."""
+        manager = self._manager()
+        if manager is None:
+            return self.async_abort(reason="not_loaded")
+        if not manager.entities:
+            return self.async_abort(reason="no_outputs")
+        if user_input is not None:
+            key = user_input.get("output")
+            if key not in manager.entities:
+                return self.async_abort(reason="output_removed")
+            self._output_key = key
+            return await self.async_step_playback_profile()
+        choices: list[SelectOptionDict] = [
+            {"value": key, "label": f"{player.name} ({player.entity_id})"}
+            for key, player in manager.entities.items()
+        ]
+        return self.async_show_form(
+            step_id="playback",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("output"): SelectSelector(
+                        SelectSelectorConfig(options=choices, mode=SelectSelectorMode.DROPDOWN)
+                    )
+                }
+            ),
+        )
+
+    async def async_step_playback_profile(self, user_input=None) -> ConfigFlowResult:
+        """Edit the existing saved session, never a duplicate set of config-entry options."""
+        manager = self._manager()
+        if manager is None:
+            return self.async_abort(reason="not_loaded")
+        player = manager.entities.get(self._output_key or "")
+        if player is None or player.session is None or player.session.closed:
+            return self.async_abort(reason="output_removed")
+        if manager.storage.corrupt:
+            return self.async_abort(reason="storage_unavailable")
+        errors = {}
+        if user_input is not None:
+            try:
+                # Preserve fields changed elsewhere while this form was open.
+                changes = {k: v for k, v in user_input.items() if v != self._profile_defaults[k]}
+                player.set_playback_profile(changes)
+                await manager.storage.flush()
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
+            except ValueError:
+                errors["base"] = "invalid_profile"
+        else:
+            self._profile_defaults = asdict(player.control.profile)
+        defaults = user_input or self._profile_defaults
+        return self.async_show_form(
+            step_id="playback_profile",
+            description_placeholders={"player": player.name, "entity_id": player.entity_id},
+            errors=errors,
+            data_schema=vol.Schema(
+                {
+                    vol.Required("confirmation", default=defaults["confirmation"]): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["delivery", "reported"],
+                            translation_key="confirmation",
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required("end_state", default=defaults["end_state"]): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["idle", "paused", "off"],
+                            translation_key="end_state",
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required("play_once", default=defaults["play_once"]): BooleanSelector(),
+                    vol.Required("weak_end", default=defaults["weak_end"]): BooleanSelector(),
+                }
+            ),
         )

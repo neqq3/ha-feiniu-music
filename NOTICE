@@ -1,19 +1,24 @@
 FeiNiu Music for Home Assistant
 
 client.py, protocol.py, client regression tests and native lyric alignment
-behavior are adapted from the FeiNiu Music provider in
-Music Assistant server, commit 05386833605fdbad9a9ccb59843c3b924a1ffc6d:
+behavior reuse and adapt this project's author's FeiNiu Music provider for
+Music Assistant. Implementation lineage is recorded at commit
+05386833605fdbad9a9ccb59843c3b924a1ffc6d:
 https://github.com/music-assistant/server/pull/6416
-Source license: Apache License 2.0 (included as LICENSE).
+This project retains Apache License 2.0 (included as LICENSE).
 Changes: independent exception types, HA session integration and authenticated
 HTTP media delivery. The original provider is not a runtime dependency.
 
 FeiNiu Music and fnOS are names of their respective owners. This project is
 unofficial.
 
-brand/icon.png and brand/icon@2x.png are local raster renders of the colour
-SVG already reviewed in the MA project. Colour and monochrome SVG adaptations
-based on the FeiNiu Music app icon. The brand pattern is not claimed as original
-work or relicensed under Apache-2.0. Permission to publicly redistribute the
-brand artwork has not been independently confirmed; these assets are included
-for the user's local evaluation, not as a claim of official endorsement.
+The card navigation/transport icons are independently authored under Apache-2.0.
+The separate HA brand PNGs and embedded card mark are the project owner's retained
+SVG redraw based on the FeiNiu Music app icon. They remain a brand-referential
+adaptation. Permission to redistribute third-party brand rights is not established
+by that redraw or granted by this project's Apache-2.0 license. No official
+endorsement is claimed. The same mark also exists in early Git history.
+
+The bundled Montserrat font is third-party material under SIL Open Font License
+1.1. See frontend/Montserrat-OFL.txt; that notice and license are also retained
+in the distributed JavaScript card. It is not relicensed as Apache-2.0.

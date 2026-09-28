@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import asdict, replace
 from datetime import timedelta
 from time import monotonic
 from typing import Any
@@ -229,7 +230,14 @@ class FeiNiuPlayer(MediaPlayerEntity):
             if session and session.started
             else "unavailable",
             "lyric_offset": self.saved.lyric_offset,
+            "playback_profile": asdict(session.profile if session else self.saved.profile),
         }
+
+    @callback
+    def set_playback_profile(self, changes: dict[str, Any]) -> None:
+        """Share per-output preferences between native options and the optional card."""
+        self.control.profile = replace(self.control.profile, **changes)
+        self._changed()
 
     async def _resolve(self, item: QueueItem, round_id: int) -> PlaybackRequest:
         """JIT permission validation and unique round URL before any output command."""
@@ -261,11 +269,17 @@ class FeiNiuPlayer(MediaPlayerEntity):
         self._attr_media_title = metadata.title
         self._attr_media_artist = metadata.artist
         self._attr_media_album_name = metadata.album
-        self._attr_media_image_url = metadata.album_art_uri
+        # HA's image proxy serves the full player; the speaker keeps the smaller
+        # existing artwork grant. Both variants retain the same owner checks.
+        self._attr_media_image_url = (
+            f"{metadata.album_art_uri}&size=1024" if metadata.album_art_uri else None
+        )
         duration = number(row.get("duration"))
         return PlaybackRequest(
             url,
-            mime,
+            # HA needs the music media class to retain artist/album/artwork in DLNA.
+            # The audio endpoint still supplies the original MIME Content-Type.
+            MediaType.MUSIC,
             {
                 "title": metadata.title,
                 "thumb": metadata.album_art_uri,

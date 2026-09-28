@@ -15,7 +15,6 @@ from .const import DOMAIN
 from .media import thumbnail
 from .media_player import FeiNiuPlayer
 from .queue import QueueError, RevisionConflict
-from .session import OutputProfile
 
 
 def player_for(
@@ -178,10 +177,10 @@ async def get_lyrics(
         vol.Required("entity_id"): str,
         vol.Optional("lyric_offset"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=30)),
         vol.Optional("profile"): {
-            vol.Required("confirmation"): vol.In(["delivery", "reported"]),
-            vol.Required("play_once"): bool,
-            vol.Required("end_state"): vol.In(["idle", "paused", "off"]),
-            vol.Required("weak_end"): bool,
+            vol.Optional("confirmation"): vol.In(["delivery", "reported"]),
+            vol.Optional("play_once"): bool,
+            vol.Optional("end_state"): vol.In(["idle", "paused", "off"]),
+            vol.Optional("weak_end"): bool,
         },
     }
 )
@@ -194,7 +193,7 @@ async def preferences(
         if "profile" in msg:
             if not connection.user.is_admin:
                 raise Unauthorized
-            player.control.profile = OutputProfile(**msg["profile"])
+            player.set_playback_profile(msg["profile"])
         if "lyric_offset" in msg:
             player.saved.lyric_offset = msg["lyric_offset"]
         player._changed()

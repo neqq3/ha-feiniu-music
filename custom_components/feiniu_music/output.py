@@ -161,6 +161,10 @@ class OutputAdapter:
 
     @callback
     def _registry_changed(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        # Dynamic capabilities (e.g. DLNA Pause disappearing at track end) do not
+        # change the binding. Resubscribing here loses the pending state transition.
+        if event.data["action"] == "update" and "entity_id" not in event.data["changes"]:
+            return
         # Registry rename events carry the new entity_id and changes with its old value.
         candidates = {
             event.data.get("entity_id"),

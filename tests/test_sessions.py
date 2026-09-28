@@ -236,6 +236,25 @@ async def test_natural_end_once_but_explicit_stop_at_end_does_not_advance(hass, 
     assert len(output.calls) == 2 and session.phase == "idle"
 
 
+async def test_dynamic_output_features_at_end_do_not_lose_queue_advance(hass, sessions):
+    """DLNA removes Pause/Seek at STOPPED, updating the registry before state events."""
+    output = TestOutput()
+    output._attr_unique_id = "synthetic_dynamic_dmr"
+    await hass.data[DATA_COMPONENT].async_add_entities([output])
+    session, _ = await sessions(output=output)
+    await session.start()
+    await output.async_media_seek(10)
+    await hass.async_block_till_done()
+    output._attr_supported_features &= ~(Feature.PAUSE | Feature.SEEK)
+    await output.async_media_stop()
+    await hass.async_block_till_done()
+    if session._advance:
+        await session._advance
+    assert len(output.calls) == 2
+    assert session.queue.current.track_id == "two"
+    assert session.phase == "playing"
+
+
 async def test_stop_failure_still_invalidates_control_and_preserves_queue(sessions):
     session, output = await sessions()
     await session.start()

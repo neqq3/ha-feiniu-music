@@ -16,7 +16,7 @@ from custom_components.feiniu_music.runtime import FeiNiuRuntime
 from .conftest import image_bytes, track
 
 
-@pytest.mark.parametrize("size", [128, 256, 512])
+@pytest.mark.parametrize("size", [128, 256, 512, 1024])
 async def test_resized_pixels_persist_and_expire_without_extending_source(hass, size, monkeypatch):
     clock = [10000.0]
     monkeypatch.setattr(module, "time", lambda: clock[0])
@@ -24,7 +24,7 @@ async def test_resized_pixels_persist_and_expire_without_extending_source(hass, 
     source = CachedImage.build(image_bytes())
     thumb = await cache.executor(resize_image, source, size)
     with Image.open(BytesIO(thumb.data)) as im:
-        assert im.size == (size, size * 3 // 4)
+        assert im.size == (min(size, 640), min(size, 640) * 3 // 4)
     key = cache.key("opaque", size)
     await cache.put(key, thumb)
     other = ArtworkCache(hass, "synthetic-identity")
@@ -32,6 +32,21 @@ async def test_resized_pixels_persist_and_expire_without_extending_source(hass, 
     clock[0] += module.RESOURCE_TTL
     assert await other.get(key) is None
     assert await cache.get(key) is None
+
+
+def test_full_player_artwork_preserves_small_source_pixels_and_bounds_large_images():
+    # Nonuniform pixels expose accidental lossy re-encoding, unlike a flat fill.
+    original = Image.new("RGB", (80, 60))
+    original.putdata([(x * 17 % 256, x * 31 % 256, x * 43 % 256) for x in range(4800)])
+    raw = BytesIO()
+    original.save(raw, format="PNG")
+    result = resize_image(CachedImage.build(raw.getvalue()), 1024)
+    with Image.open(BytesIO(result.data)) as full:
+        assert full.size == original.size
+        assert full.convert("RGB").tobytes() == original.tobytes()
+    large = CachedImage.build(image_bytes(size=(1600, 1200)))
+    with Image.open(BytesIO(resize_image(large, 1024).data)) as bounded:
+        assert bounded.size == (1024, 768)
 
 
 async def test_disk_and_memory_bounds_and_corrupt_recovery(hass, monkeypatch):

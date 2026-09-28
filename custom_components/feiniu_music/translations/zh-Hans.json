@@ -55,10 +55,47 @@
         "data": {
           "outputs": "输出播放器"
         }
+      },
+      "init": {
+        "title": "飞牛音乐设置",
+        "menu_options": {
+          "outputs": "选择输出播放器",
+          "playback": "起播与续播设置"
+        }
+      },
+      "playback": {
+        "title": "选择要配置的代理播放器",
+        "description": "每个飞牛代理播放器独立保存起播和续播参数。同一账号下的其它输出不受影响；不需要安装音乐卡片。",
+        "data": {
+          "output": "飞牛代理播放器"
+        }
+      },
+      "playback_profile": {
+        "title": "起播与续播设置",
+        "description": "**{player}**\n\n`{entity_id}`\n\n只影响此代理播放器。保存不重启播放、不清空队列，也不修改音箱固件配置。默认使用音频交付或新进度确认起播，以空闲状态判断结束。将暂停、关机或弱反馈视为结束，可能把手动暂停／停止误判成自动续播，请仅针对已验证的设备启用。",
+        "data": {
+          "confirmation": "起播确认方式",
+          "end_state": "设备播放结束时的状态",
+          "play_once": "加载后补发一次播放动作",
+          "weak_end": "无可靠进度时允许按结束状态续播"
+        },
+        "data_description": {
+          "confirmation": "默认：收到音频交付或新的设备进度。仅在设备反馈可靠时选择相信播放状态。",
+          "end_state": "默认：空闲（idle）。暂停和关闭通常代表用户操作，不一定是歌曲自然结束。",
+          "play_once": "默认关闭。仅为加载歌曲后还需要一次播放命令的设备启用。",
+          "weak_end": "默认关闭。启用后可在缺少可信进度时仅凭结束状态续播，更容易误判手动停止。"
+        }
       }
     },
     "error": {
-      "invalid_output": "输出不可用、不支持播放或存在包装环路。"
+      "invalid_output": "输出不可用、不支持播放或存在包装环路。",
+      "invalid_profile": "播放兼容参数无效，请检查后重试。"
+    },
+    "abort": {
+      "not_loaded": "请先让飞牛音乐集成成功加载，再配置播放行为。",
+      "no_outputs": "请先在集成选项中选择输出播放器。",
+      "output_removed": "此代理播放器已移除或正在重载，请重新打开配置。",
+      "storage_unavailable": "队列存储需要修复，暂时不能保存播放设置。原文件不会被覆盖。"
     }
   },
   "issues": {
@@ -69,6 +106,21 @@
     "queue_storage": {
       "title": "队列存储需要修复",
       "description": "原存储文件已保留，当前会话不会覆盖它。请备份后按 README 的队列存储恢复步骤处理；暂时不要依赖队列持久化。"
+    }
+  },
+  "selector": {
+    "confirmation": {
+      "options": {
+        "delivery": "音频交付或新的设备进度（默认）",
+        "reported": "相信设备报告的播放状态"
+      }
+    },
+    "end_state": {
+      "options": {
+        "idle": "空闲（idle，默认）",
+        "paused": "暂停（paused）",
+        "off": "关闭（off）"
+      }
     }
   }
 }

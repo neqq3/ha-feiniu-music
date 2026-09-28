@@ -2,7 +2,16 @@
 
 1. 在「设置 → 设备与服务 → 飞牛音乐 → 配置」选择已有的 HA 音频输出。
    每个账号与输出组合对应一个固定播放器；不要选择飞牛播放器自身或已包含它的组。
-2. 安装 README 的卡片资源，复制 `examples/dashboard.yaml`，替换成实际固定实体 ID。
+2. 安装 README 的卡片资源，在仪表盘添加 FeiNiu Music，使用可视化编辑器选择飞牛播放器、
+   紧凑／完整模式、标题和配色。新增卡片默认深色紧凑、自动歌词；旧 YAML 未写 `display_mode` 时保留完整模式。
+   紧凑内容可选精简、歌词、自动；歌词／自动保持固定高度，有同步歌词时自动跟随当前行。
+   背景独立选择：原默认背景与透明度，或随封面变色的半透明玻璃。旧 YAML 默认保留原背景。
+   标题前不显示音符图标；控制按钮排列、尺寸及下方进度条沿用原紧凑卡片。
+   暂停冻结当前位置，切歌清空旧歌词，自动模式遇到纯文本／无歌词时显示封面，可手动切换查看。
+   加载、输出被接管、失败或离线会在固定区域显示真实状态；不增加“正在播放／已暂停”状态标签。
+   旧紧凑卡片未选内容时保留精简。点封面打开播放页，点展开打开音乐库。
+   弹层复用所选播放器，关闭不会停止播放或重建队列。完整模式适合单卡片的 HA 面板视图。
+   YAML 示例见 `examples/dashboard.yaml`；起播与续播配置仍属于集成，每个输出独立保存。
 3. 在卡片「选择音乐」里展开专辑、歌单、歌手歌曲或所有歌曲。
    「播放整个列表」开始连续播放；单曲的加号只追加这首；下一首加入不会立即发声。
    点歌曲直接播放会保留它的列表上下文。纯 media_source 直接投送仍是单曲能力。
@@ -10,9 +19,20 @@
    随机只调整待播部分；手动下一首不会被单曲循环困住。
 5. 暂停/恢复、音量和 seek 取决于输出支持。播放状态、HTTP 已交付与真实出声不是同一回事。
 6. 歌词页区分无歌词、纯文本和同步歌词。设置里的秒数偏移只调整显示，不改变音频位置。
+   同步歌词右上角可每次提前／延后 0.5 秒，点击偏移数值恢复默认；与设置使用同一个值。
+   鼠标进入歌词区或键盘聚焦时显示偏移按钮；触屏操作歌词时也会显示。
+   滚轮／触摸滚动后暂停自动跟随，停止操作 8 秒后回到当前歌词，不增加额外返回按钮。
+   点击歌词文字只将该句居中，不跳转音频；边缘歌词渐隐模糊，悬停时提亮。
+   点击每句右侧的时间可从该句播放；定位会考虑显示偏移，暂停状态下定位成功后恢复播放。
+   时间按钮仅在该句被悬停、聚焦或选中时显示，暂停和不可跳转不会让所有按钮出现。
+   设备不支持当前歌曲定位时，时间按钮不可操作。纯文本歌词不显示定位或偏移快捷按钮。
+   竖屏歌名和副标题与封面居中对齐；播放页进出使用淡入淡出和小幅位移，不缩放封面。
 7. 重载集成或重启 HA 后，应恢复队列但不自动播放。点击播放才重新验权并请求恢复。
-8. 起播失败时查看卡片诊断，确认原输出是否可用以及有无交付证据。默认不无限重试。
-   兼容选项应按设备行为调整；PAUSED/OFF 当结束可能把用户暂停误判为自然结束。
+8. 「设置 → 设备与服务 → 飞牛音乐 → 配置 → 起播与续播设置」先选一个飞牛代理播放器，
+   再配置起播确认、结束状态、补发播放和弱反馈续播。每个账号／输出独立保存，无需安装卡片。
+   保存立即更新后端，不重载账号、不清空队列、不发送播放命令；重启后仍保留。
+   卡片是同一份设置的快捷入口，歌词偏移仍留在卡片。播放兼容设置仅管理员可修改。
+   起播失败可下载集成诊断或查看卡片诊断。默认不无限重试；PAUSED/OFF 或弱反馈可能误判手动停止。
 9. 移除一个选中输出不应打断另一个；重新选择时保留原队列。删除账号则移除该账号队列。
 
 升级/回滚请先备份集成、配置条目、实体注册表和本集成 Store。旧版本的内存队列无法恢复。
@@ -25,4 +45,8 @@ Select outputs in integration options, register the card module, and replace ent
 an empty queue. Each fixed output owns its queue, occurrence IDs, repeat/shuffle and lyric offset.
 Reload restores queues idle; explicit Play revalidates access and requests supported native resume.
 Inspect diagnostics when a device does not confirm playback. HTTP delivery is not proof of sound.
+Integration options → Playback compatibility selects one FeiNiu player before editing its
+start/end detection profile. Each account/output pair keeps its own persisted settings, shared
+with the optional card. Saving sends no output command and does not reload the account or queue.
+Lyrics offset remains a card display setting. Playback compatibility changes require an administrator.
 Back up both code and config/registry/storage before upgrading or rolling back.

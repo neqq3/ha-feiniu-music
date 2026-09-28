@@ -184,7 +184,10 @@ git diff --check
 ```
 
 Only the integration suite is claimed, not the entire Home Assistant or MA test suite.
-The optional card is original local code with self-contained SVG controls and no CDN dependency.
+The optional card has a local component implementation and no runtime CDN dependency.
+Navigation and transport SVG paths are hand-authored in `frontend/card-icons.js`.
+The project owner retains the separate brand-reference redraw; its distinction from
+the independent UI icons is documented in `frontend/REFERENCE_ASSETS.md`.
 No production HA/MA, NAS permissions or music files were changed. Physical playback and listening
 were not repeated for 0.2.0; previous device observations below remain historical evidence only.
 
@@ -411,3 +414,119 @@ Large libraries, other FeiNiu/HA releases, all codecs, long-term natural expiry 
 cross-process concurrent login have not been validated. The detail cache permits a
 30-second stale window; already delivered metadata/images cannot be revoked from clients.
 No synthetic result is presented as a live NAS or listening test.
+
+## Native per-output playback options (2026-09-28)
+
+Integration options → Playback compatibility now edits the existing persisted profile for one
+selected FeiNiu proxy. No custom card is required. Tests verify isolation, offline editing,
+cancel/removal/unloaded handling, actual HA Store reload, administrator checks, native/card
+round trips and no output commands or queue/session replacement when preferences are saved.
+
+- Target HA tests: **43 passed**; full backend: **308 passed**.
+- Ruff check/format: passed; mypy: 23 source files, no issues; `git diff --check`: passed.
+- Frontend unit tests: **5 passed**; synthetic browser regression: passed, including external
+  profile state updates and lyric-only/partial saves that preserve unedited playback preferences.
+- The existing fullscreen-exit browser assertion now waits for the fullscreenchange-driven
+  control state; the first run caught a timing race, not a playback-preference failure.
+- Test HA native options saved a reversible profile change and the card API restored it.
+  Queue revision/identity/length, playback round and lyrics offset remained unchanged.
+  This settings round trip sent no audio service commands. Deployment required one test-HA
+  restart; the original queue was retained and the authorized MA3 playback resumed.
+
+Live evidence and screenshots remain outside the repository. No credentials or media payloads
+were added. No commit or push was performed for this local candidate.
+
+## Playback-page lyrics and layout (2026-09-28)
+
+- Frontend unit tests: **6 passed**, including inverse display-offset seek calculation,
+  track bounds and invalid timestamps.
+- The existing synthetic browser suite passed, extended with real wheel events and an
+  8-second inactivity deadline (subsequent scrolling restarts it), keyboard time-button
+  activation, paused-track seek/resume, rejected seek, stale track response, unsupported
+  seek, offset persistence requests/failure/bounds and untimed lyrics.
+- The layout test reproduces HA 2026.9.4's observed `ha-card` default
+  `transition: 0.3s ease-out` and samples 24 frames in each direction. The card now
+  disables layout interpolation; reduced-motion and 390/1280px lyric controls are covered.
+- Test HA serves the exact built JavaScript bytes and reports `transition-property: none`.
+  Deployment only updates the static card and its existing resource URL: no HA restart,
+  integration reload or audio commands. Live UI validation covered both untimed and synced
+  lyrics, a reversible `0 → +0.5 → 0` offset save, wheel browsing, right-side time buttons
+  and automatic recentering. Lyric seek behavior above is synthetic, not an assertion of
+  real speaker seek accuracy; no live seek command was sent in this pass.
+- `git diff --check`: passed. Backend Python is unchanged by this frontend task;
+  the previous 308-test backend result was not rerun or relabeled as a new run.
+
+### Lyrics visual interaction follow-up (2026-09-28)
+
+- Frontend unit tests: **6 passed**; the existing synthetic browser suite passed again.
+- Added text-click/keyboard centering with zero audio commands, progressive edge blur,
+  hover clarity, symmetric portrait lyric gutters, centered portrait title/subtitle,
+  and missing-lyrics layout without timed-line padding.
+- The transition regression now samples **32 frames** each way: content opacity and
+  vertical translation change while card bounds, grid, artwork and text dimensions
+  stay stable within each view. Rapid reversal, closing during entry, animation cleanup
+  and reduced motion are also covered. No playback service is called by navigation.
+- Official frontend code and its rendered page were inspected as reference only;
+  the existing custom element uses its own DOM, CSS and Web Animations implementation.
+- This pass changes frontend only; backend tests are not represented as newly rerun.
+- Follow-up regression covers disabled/paused time-button visibility in both desktop
+  sizes and a separate real `hasTouch`/mobile browser context. Tapping lyric text reveals
+  only its time button and sends no audio command. Offset controls fade on lyric-region
+  hover, remain keyboard reachable, and appear during touch lyric interaction.
+- A live resize check caught self-sized lyric padding retaining a former taller viewport.
+  Padding now derives from the allocated parent panel; browser checks assert that the
+  scroll viewport fits that panel after wide/portrait resize.
+
+## Compact dashboard card and visual editor (2026-09-28)
+
+- Frontend unit tests: **6 passed**. Full synthetic browser suite passed, including
+  compact sizing at 320/390/700 px, two independent player targets, native modal focus
+  return, stable dashboard space, fullscreen exit and reconfiguration cleanup.
+- Collapsed compact cards do not request library, queue pages or lyrics. Opening lyrics
+  does not fetch the library; expansion and closing send no playback command.
+- Editor schema/events preserve unknown YAML fields and grid options, retain legacy
+  full mode, filter FeiNiu entities and update the preview without playback commands.
+- In real HA 2026.9.4, the native form loaded, compact mode/title/auto theme updated the
+  preview and produced matching YAML. Its library modal opened and closed successfully.
+  Preview edits were cancelled instead of replacing the user's existing dashboard.
+- Navigation regression covers all four library categories at wide and portrait sizes:
+  opening the queue removes category highlight/aria-current; returning to the library
+  restores the remembered category. Portrait queue hides the library category strip.
+  Live wide and 390x844 checks confirmed the same visibility/selection behavior.
+- Frontend-only deployment served exactly the local build. No HA restart, integration
+  reload or live audio command was needed. Backend tests were not rerun for this task.
+
+### Compact lyrics and background presets (2026-09-28)
+
+- Frontend unit tests: **6 passed**; the full synthetic browser suite passed with
+  simple/lyrics/auto modes, synced/plain/missing/stale lyric results, paused/offline
+  states, cached expansion, fixed stage height, two independent cards and 320/390/700 px
+  compact layouts. Full-page lyric and editor regressions also passed.
+- The established controls remain on one row with queue/volume at the right and the
+  progress bar below. Rich modes insert the lyric/artwork stage above those controls.
+- Background presets are independent of content mode: omitted settings preserve the
+  original background/opacity; artwork enables cover crossfades and translucent glass.
+  Tests cover dark/light themes, invalid/missing artwork and redundant image requests.
+- Test HA 2026.9.4 served the exact `0.3.0-compact-lyrics-2` build. Its native editor
+  preview verified both background choices, the title without a note icon, restored
+  controls and live synchronized lyrics in auto mode. Preview edits were cancelled;
+  the existing full-page dashboard was retained.
+- This deployment updated only the card resource and static JavaScript. No HA restart,
+  integration reload or live audio command was sent. Backend tests were not rerun.
+
+## Stable snapshot and asset audit (2026-09-28)
+
+- Full backend regression: **308 passed** in the existing isolated HA test environment;
+  frontend unit tests: **6 passed**; the full synthetic Edge browser suite passed.
+- Ruff lint and format pass for the integration/test Python files; mypy passes 23
+  source modules. The OFL font notice remains in the source and built resource.
+  Provider lineage identifies the integration author's own MA provider. The owner's
+  reference-based brand redraw is retained as explicitly requested; navigation and
+  transport icons use independent geometry.
+- Candidate upload contains no captured media, vendor application bundle, HAR, runtime
+  config or private research. A pattern scan found only the deliberate credential-URL
+  rejection fixture at `test.invalid`; it is not a live credential.
+- The retained brand adaptation also exists in early Git history. No history rewrite or
+  repository visibility change is part of this snapshot. These checks do not constitute
+  a legal guarantee about visual similarity or historical redistribution.
+- Subsequent overlay/auto-mode behavior changes are separate from this stable snapshot.

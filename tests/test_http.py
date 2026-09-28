@@ -363,6 +363,31 @@ async def test_thumbnail_cache_window_cannot_outlive_signed_url(delivery, runtim
     runtime.client.cover.assert_awaited_once()
 
 
+async def test_full_player_image_uses_same_grant_and_owner_check(delivery, runtime, monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image
+
+    browser, _, _, _, _ = delivery
+    clock = [100.0]
+    monkeypatch.setattr("custom_components.feiniu_music.runtime.monotonic", lambda: clock[0])
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
+    runtime.client.cover = AsyncMock(return_value=image_bytes(size=(1400, 1050)))
+    token = runtime.grant_artwork("track", "track-one", "cover-one")
+    path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/artwork?token={token}"
+    small = await browser.get(path)
+    with Image.open(BytesIO(await small.read())) as image:
+        assert image.size == (512, 384)
+    large = await browser.get(path + "&size=1024")
+    assert large.status == 200
+    with Image.open(BytesIO(await large.read())) as image:
+        assert image.size == (1024, 768)
+    runtime.client.cover.assert_awaited_once()
+    clock[0] += 31
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one", accessStatus=2)}
+    assert (await browser.get(path + "&size=1024")).status == 403
+
+
 async def test_short_grant_cache_window_cannot_outlive_token(delivery, runtime, monkeypatch):
     browser, _, _, _, _ = delivery
     clock = [100.0]

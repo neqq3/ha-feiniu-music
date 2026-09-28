@@ -1,9 +1,13 @@
 """Exercise queues against real HA entity services and state events, without a NAS."""
 
 import asyncio
-from unittest.mock import Mock, patch
+from types import MethodType, SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+from xml.etree import ElementTree as ET
 
 import pytest
+from async_upnp_client.profiles.dlna import DmrDevice, TransportState
+from homeassistant.components.dlna_dmr.media_player import DlnaDmrEntity
 from homeassistant.components.media_player import (
     DATA_COMPONENT,
     MediaPlayerEntity,
@@ -20,6 +24,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.feiniu_music.const import DOMAIN
 from custom_components.feiniu_music.media_player import FeiNiuPlayer
@@ -139,6 +144,57 @@ async def finish(hass, speaker):
 
 def played_ids(speaker):
     return [url.split("?")[0].rsplit("/", 1)[-1] for url, _ in speaker.calls]
+
+
+async def test_ha_full_player_artwork_does_not_change_speaker_thumbnail(hass, player, runtime):
+    controller, speaker = player
+    await controller.async_play_media("music", uri(runtime, "track/one"))
+    await hass.async_block_till_done()
+    speaker_artwork = speaker.calls[-1][1]["extra"]["thumb"]
+    assert speaker_artwork and "size=" not in speaker_artwork
+    assert controller.media_image_url == speaker_artwork + "&size=1024"
+
+
+async def test_queue_metadata_survives_actual_dlna_serialization(hass, player, runtime):
+    """Keep HA and UPnP metadata conversion real; stub only the device/network boundary."""
+    controller, speaker = player
+    with patch.object(speaker, "async_play_media", wraps=speaker.async_play_media) as play:
+        await controller.async_play_media("music", uri(runtime, "track/one"))
+        await hass.async_block_till_done()
+    device = SimpleNamespace(
+        can_stop=False,
+        profile_device=SimpleNamespace(available=True),
+        transport_state=TransportState.PLAYING,
+        _fetch_headers=AsyncMock(return_value={"Content-Type": "audio/flac"}),
+        async_set_transport_uri=AsyncMock(),
+    )
+    device.construct_play_media_metadata = MethodType(
+        DmrDevice.construct_play_media_metadata, device
+    )
+    dlna = DlnaDmrEntity(
+        "uuid:synthetic",
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        "Synthetic",
+        0,
+        None,
+        False,
+        "http://output.invalid/description",
+        None,
+        False,
+        MockConfigEntry(domain="dlna_dmr"),
+    )
+    dlna.hass = hass
+    dlna._device = device
+    await dlna.async_play_media(**play.await_args.kwargs)
+    wire = ET.fromstring(device.async_set_transport_uri.await_args.args[2])
+    fields = {node.tag.rsplit("}", 1)[-1]: node for node in wire.iter() if len(node) == 0}
+    assert fields["class"].text == "object.item.audioItem.musicTrack"
+    assert fields["title"].text == "Title one"
+    assert fields["artist"].text == "Artist"
+    assert fields["album"].text == "Album"
+    assert fields["albumArtURI"].text == play.await_args.kwargs["extra"]["thumb"]
+    assert len(fields["albumArtURI"].text) < 256
+    assert fields["res"].attrib["protocolInfo"] == "http-get:*:audio/flac:*"
 
 
 async def test_browse_song_carries_list_context_and_starts_at_selected_position(

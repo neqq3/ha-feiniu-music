@@ -29,7 +29,7 @@ MAX_DISK_FILES = 2048
 MAX_MEMORY_BYTES = 16 * 1024 * 1024
 MAX_MEMORY_FILES = 512
 MAX_RESOURCE_BYTES = 8 * 1024 * 1024
-SIZES = {128, 256, 512}
+SIZES = {128, 256, 512, 1024}
 _HEADER = struct.Struct("!8sd32s")
 _MAGIC = b"FNIMAGE1"
 
@@ -70,7 +70,9 @@ def resize_image(source: CachedImage, size: int) -> CachedImage:
                 "RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB"
             )
             result = io.BytesIO()
-            image.save(result, format="WEBP", quality=82, method=3)
+            # Full-player artwork must not inherit the lossy small-thumbnail quality.
+            # thumbnail() never upscales; smaller source images keep their actual detail.
+            image.save(result, format="WEBP", quality=82, lossless=size == 1024, method=3)
             return CachedImage.build(result.getvalue(), source.created)
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as err:
         raise ProtocolError("Artwork could not be decoded") from err

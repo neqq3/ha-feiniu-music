@@ -28,17 +28,35 @@
 设置 → 仪表盘 → 资源中添加（需开启用户高级模式）：
 
 ```yaml
-url: /feiniu_music/feiniu-music-card.js?v=0.2.1
+url: /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-2
 type: module
 ```
 
-在自己的仪表盘新增手动卡片，替换示例实体 ID：
+在仪表盘的添加卡片中选择 **FeiNiu Music**，可视化选择飞牛播放器、展示模式、紧凑卡片内容、背景、标题和配色。
+新添加的卡片默认为深色紧凑卡片，自动显示同步歌词；也可以使用 YAML，替换示例实体 ID：
 
 ```yaml
 type: custom:feiniu-music-card
 entity: media_player.your_feiniu_output
 title: 客厅音乐
+display_mode: compact
+compact_view: auto
+compact_background: artwork
+theme: dark
 ```
+
+`compact` 适合普通仪表盘。背景与内容模式分别选择：
+`compact_background: default` 保留原默认底色、透明度与边框；`artwork` 使用封面氛围＋半透明玻璃，
+背景颜色随封面平滑过渡。旧 YAML 不填此项时保留原默认背景，新添加卡片默认封面氛围。
+播放按钮、队列／音量和下方进度条保留原来的布局与尺寸；紧凑标题前不显示音符图标。
+`compact_view` 可选 `simple`（精简播放器）、`lyrics`（歌词播放器）或 `auto`（有同步歌词时自动显示，其他时候显示封面）。
+歌词和自动模式保持固定高度，暂停、加载和切歌不会撑动页面；右上角按钮可临时切换封面／歌词。
+纯文本歌词可以手动查看，不模拟同步滚动；歌词文字点选与时间跳转沿用完整播放页。
+旧紧凑卡片未填 `compact_view` 时保留精简模式。点击封面打开播放／歌词界面，右上角展开按钮
+打开音乐库，队列按钮打开队列；它们共用同一个弹层和播放器，关闭不会停止播放。
+`full` 保留完整音乐界面，适合 HA 的 `panel` 视图；可选 `height: 700`（600–1200 像素）。
+旧 YAML 未填写 `display_mode` 时继续使用 `full`，不会改变已有页面。
+外观编辑不会改动队列或输出配置；起播／续播兼容性仍在集成配置中按播放器调整。
 
 另一个输出使用另一张卡片。卡片包含原生媒体选择/搜索、追加、下一首播放、
 跳播、移除、待播顺序调整、上下首、随机、循环、音量、歌词与视觉偏移。
@@ -154,8 +172,17 @@ an independent queue; the original `media_source` remains available for direct s
 No Music Assistant, bridge, NAS administrator access, external database or transcoding service is required.
 
 Install `custom_components/feiniu_music`, restart HA, add the integration and select outputs.
-Register `/feiniu_music/feiniu-music-card.js?v=0.2.1` as a Lovelace JavaScript module and add
-`type: custom:feiniu-music-card` with the fixed FeiNiu `entity` ID. The optional card provides
+Register `/feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-2` as a Lovelace JavaScript module and add
+`type: custom:feiniu-music-card` with the fixed FeiNiu `entity` ID. The visual editor selects the
+player, display mode, compact content, title and colors. New picker cards default to
+`display_mode: compact`, `compact_view: auto`, `compact_background: artwork`, and dark colors. Compact content can be
+`simple`, `lyrics`, or `auto`; lyrics/auto keep a fixed height across state changes.
+Auto shows synchronized lyrics when available and artwork otherwise. Existing compact
+YAML without `compact_view` keeps the simple player. The independent background preset is
+`default` (original colors/opacity, also used by older YAML) or `artwork` (cover colors and frosted glass);
+legacy YAML without that field keeps the full interface. Compact cards expand into a shared
+modal for the library, queue or lyrics without changing playback. `display_mode: full` suits a
+panel view, with optional `height` (600–1200 pixels). The optional card provides
 queue editing, native browsing/search, lyrics, controls and per-output compatibility preferences.
 Chinese and English are included. The backend remains authoritative, including with multiple browsers.
 

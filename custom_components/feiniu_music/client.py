@@ -1,4 +1,4 @@
-"""Native client adapted from Music Assistant; see NOTICE for provenance."""
+"""Native client adapted from the author's MA provider; see NOTICE for lineage."""
 
 from __future__ import annotations
 

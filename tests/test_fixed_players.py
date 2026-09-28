@@ -1,6 +1,7 @@
 """Fixed sessions through HA platform lifecycle, options, services and authenticated WS."""
 
 import asyncio
+from dataclasses import asdict
 from unittest.mock import patch
 
 import pytest
@@ -141,6 +142,9 @@ async def test_registry_rename_and_offline_keep_entity_identity_and_queue(hass, 
     assert not player.available
     # Existing selected offline entities survive editing options.
     flow = await hass.config_entries.options.async_init(entry.entry_id)
+    flow = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "outputs"}
+    )
     result = await hass.config_entries.options.async_configure(
         flow["flow_id"], {"outputs": ["media_player.renamed_fixture", outputs[1].entity_id]}
     )
@@ -318,3 +322,171 @@ async def test_diagnostics_contains_only_bounded_operational_context(hass, insta
     assert result["sessions"][0]["session"]["phase"] == "playing"
     for forbidden in (entry.entry_id, "http://", "https://", "authSig", "password", "Title one"):
         assert forbidden not in encoded
+
+
+async def playback_options(hass, entry, player):
+    """Use HA's actual menu and forms; no custom card or direct flow-method calls."""
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    assert flow["type"] == FlowResultType.MENU
+    flow = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "playback"}
+    )
+    selector = next(iter(flow["data_schema"].schema.values()))
+    assert any(player.entity_id in option["label"] for option in selector.config["options"])
+    flow = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"output": player.saved.binding.key}
+    )
+    assert flow["step_id"] == "playback_profile"
+    return flow
+
+
+async def test_native_playback_options_are_per_proxy_persistent_and_do_not_restart(
+    hass, installed, entry
+):
+    manager, outputs = installed
+    first, second = list(manager.entities.values())
+    await asyncio.gather(play(hass, first, entry), play(hass, second, entry, "two"))
+    first.saved.lyric_offset = 1.5
+    queues = [p.saved.queue.snapshot() for p in (first, second)]
+    sessions = [p.control for p in (first, second)]
+    options = dict(entry.options)
+    with (
+        patch.object(first.output, "send", wraps=first.output.send) as first_send,
+        patch.object(second.output, "send", wraps=second.output.send) as second_send,
+    ):
+        flow = await playback_options(hass, entry, first)
+        assert flow["data_schema"]({}) == asdict(first.control.profile)
+        settings = asdict(OutputProfile(confirmation="delivery", play_once=True, weak_end=True))
+        result = await hass.config_entries.options.async_configure(flow["flow_id"], settings)
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        first_send.assert_not_called()
+        second_send.assert_not_called()
+    assert [p.control for p in (first, second)] == sessions
+    assert [p.saved.queue.snapshot() for p in (first, second)] == queues
+    assert first.control.phase == second.control.phase == "playing"
+    assert first.control.profile == OutputProfile(**settings)
+    assert second.control.profile == OutputProfile(confirmation="reported")
+    assert first.saved.lyric_offset == 1.5
+    assert hass.states.get(first.entity_id).attributes["playback_profile"] == settings
+    assert entry.options == options  # No second preference store in config-entry options.
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    restored = hass.data[DOMAIN]["players"][entry.entry_id]
+    assert restored.entities[first.saved.binding.key].control.profile == OutputProfile(**settings)
+    assert restored.entities[second.saved.binding.key].control.profile == second.saved.profile
+    assert restored.entities[first.saved.binding.key].saved.lyric_offset == 1.5
+    assert [len(output.calls) for output in outputs] == [1, 1, 0]
+
+
+async def test_card_and_native_settings_share_state_without_overwriting_unedited_fields(
+    hass, installed, entry, hass_ws_client
+):
+    manager, outputs = installed
+    first, second = list(manager.entities.values())
+    ws = await hass_ws_client(hass)
+    register(hass)
+    flow = await playback_options(hass, entry, first)
+    original = flow["data_schema"]({})
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "feiniu_music/preferences",
+            "entity_id": first.entity_id,
+            "profile": {"end_state": "off"},
+        }
+    )
+    assert (await ws.receive_json())["success"]
+    # Native form was open before the card edit. Only its changed field should win.
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**original, "play_once": True}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await ws.send_json(
+        {
+            "id": 2,
+            "type": "feiniu_music/preferences",
+            "entity_id": first.entity_id,
+            "lyric_offset": 2,
+        }
+    )
+    assert (await ws.receive_json())["success"]
+    flow = await playback_options(hass, entry, first)
+    assert flow["data_schema"]({}) == asdict(
+        OutputProfile(confirmation="reported", end_state="off", play_once=True)
+    )
+    hass.config_entries.options.async_abort(flow["flow_id"])
+    assert second.control.profile == OutputProfile(confirmation="reported")
+    assert second.saved.lyric_offset == 0 and first.saved.lyric_offset == 2
+    assert all(not output.calls for output in outputs)
+
+
+async def test_native_profile_can_be_configured_offline_and_cancel_does_not_change_it(
+    hass, installed, entry
+):
+    manager, outputs = installed
+    player = next(iter(manager.entities.values()))
+    hass.states.async_set(outputs[0].entity_id, "unavailable")
+    await hass.async_block_till_done()
+    flow = await playback_options(hass, entry, player)
+    before = player.control.profile
+    hass.config_entries.options.async_abort(flow["flow_id"])
+    assert player.control.profile == before
+    flow = await playback_options(hass, entry, player)
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**flow["data_schema"]({}), "play_once": True}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert player.control.profile.play_once
+    assert all(not output.calls for output in outputs)
+
+
+async def test_native_profile_rejects_removed_output_and_handles_empty_selection(
+    hass, installed, entry
+):
+    manager, _ = installed
+    player = next(iter(manager.entities.values()))
+    flow = await playback_options(hass, entry, player)
+    original = flow["data_schema"]({})
+    hass.config_entries.async_update_entry(entry, options={"outputs": []})
+    await hass.async_block_till_done()
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**original, "play_once": True}
+    )
+    assert result["reason"] == "output_removed"
+    assert player.saved.profile == OutputProfile(confirmation="reported")
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "playback"}
+    )
+    assert result["reason"] == "no_outputs"
+
+
+async def test_native_profile_refuses_unloaded_account(hass, entry):
+    entry.add_to_hass(hass)
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "playback"}
+    )
+    assert result["reason"] == "not_loaded"
+
+
+async def test_card_partial_profile_still_requires_admin(
+    hass, installed, hass_ws_client, hass_admin_user
+):
+    manager, _ = installed
+    player = next(iter(manager.entities.values()))
+    ws = await hass_ws_client(hass)
+    register(hass)
+    hass_admin_user.is_owner = False
+    hass_admin_user.groups = []
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "feiniu_music/preferences",
+            "entity_id": player.entity_id,
+            "profile": {"play_once": True},
+        }
+    )
+    assert (await ws.receive_json())["error"]["code"] == "unauthorized"
+    assert not player.control.profile.play_once
