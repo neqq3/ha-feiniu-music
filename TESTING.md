@@ -530,3 +530,20 @@ were added. No commit or push was performed for this local candidate.
   repository visibility change is part of this snapshot. These checks do not constitute
   a legal guarantee about visual similarity or historical redistribution.
 - Subsequent overlay/auto-mode behavior changes are separate from this stable snapshot.
+
+### Compact mode behavior and same-height lyric layout (2026-09-28)
+
+- Frontend unit tests: **6 passed**; the complete synthetic Edge browser suite passed.
+  Auto collapses without lyrics (including pending requests); explicit lyrics mode
+  retains its loading/empty message without a duplicate cover. Both overlay choices,
+  paused timestamp visibility, status text and symmetric pagination are covered.
+- The single-line title/output header and left offset rail retain the existing **386 px**
+  rich card height. The rail no longer takes a separate row from the 136 px lyric region.
+  Narrow 320/390 px layouts, wrapped long lyrics, timestamp hit targets and touch offset
+  controls were checked. Offset controls do not seek or start audio; timestamp controls
+  retain their separate seek/play behavior.
+- Test HA served the exact `0.3.0-compact-layout-1` bundle. Its native editor preview
+  confirmed the single-line header and 386 px card height at 470 px width. The current
+  real track had no lyrics; left-rail interactions were verified with synthetic lyrics.
+  Preview changes were cancelled; no playback service call, HA restart or integration
+  reload was sent. Backend tests were not rerun for these frontend changes.

@@ -5,7 +5,7 @@ import {CARD_FONT} from './card-font.js';
 import {CARD_BRAND} from './card-brand.js';
 import {COMPACT_CSS} from './card-compact.js';
 import './card-editor.js';
-export const VERSION = '0.3.0-resource-cleanup-1';
+export const VERSION = '0.3.0-compact-layout-1';
 let fontReady;
 function loadCardFont(){
   if(!globalThis.FontFace||fontReady)return;
@@ -49,9 +49,9 @@ function playbackMode(a){return a.repeat==='one'?3:a.shuffle?1:a.repeat==='all'?
 const words = {
   en: { queue: 'Queue', lyrics: 'Lyrics', browse: 'Choose music', empty: 'Choose an album, playlist or track to begin.',
     next: 'Next', previous: 'Previous', play: 'Play / retry', pause: 'Pause', stop: 'Stop', shuffle: 'Shuffle', repeat: 'Repeat',
-    volume: 'Volume', seek: 'Playback position', clear: 'Clear queue', more: 'Next page', back: 'Back',
+    volume: 'Volume', seek: 'Playback position', clear: 'Clear queue', more: 'More', back: 'Back', pagePrevious:'Previous page', pageNext:'Next page',
     remove: 'Remove', up: 'Move earlier', down: 'Move later', jump: 'Play this item', add: 'Add to queue', playnext: 'Play next',
-    search: 'Search music', searchGo: 'Search', loading: 'Loading…', noLyrics: 'No lyrics for this track.', lyricError: 'Lyrics unavailable. Playback is unaffected.',
+    search: 'Search music', searchGo: 'Search', loading: 'Loading…', compactLoading:'Loading', noLyrics: 'No lyrics for this track.', lyricError: 'Lyrics unavailable. Playback is unaffected.',
     settings: 'Playback & lyrics', offset: 'Lyrics offset (seconds)', save: 'Save', saved: 'Saved', close: 'Close',
     confirmation: 'Start confirmation', delivery: 'Audio delivery or fresh device progress', reported: 'Trust the output’s playing report',
     playOnce: 'Send one extra Play after loading', end: 'Output reports completion as', weak: 'Allow completion without reliable progress',
@@ -67,9 +67,9 @@ const words = {
   },
   zh: { queue: '队列', lyrics: '歌词', browse: '选择音乐', empty: '选择专辑、歌单或歌曲开始播放。',
     next: '下一首', previous: '上一首', play: '播放／重试', pause: '暂停', stop: '停止', shuffle: '随机', repeat: '循环',
-    volume: '音量', seek: '播放进度', clear: '清空队列', more: '下一页', back: '返回',
+    volume: '音量', seek: '播放进度', clear: '清空队列', more: '更多', back: '返回', pagePrevious:'上一页', pageNext:'下一页',
     remove: '移除', up: '向前移动', down: '向后移动', jump: '播放这一项', add: '加入队列', playnext: '下一首播放',
-    search: '搜索音乐', searchGo: '搜索', loading: '正在加载…', noLyrics: '这首歌暂无歌词。', lyricError: '歌词暂时不可用，不影响播放。',
+    search: '搜索音乐', searchGo: '搜索', loading: '正在加载…', compactLoading:'加载中', noLyrics: '这首歌暂无歌词。', lyricError: '歌词暂时不可用，不影响播放。',
     settings: '播放与歌词设置', offset: '歌词偏移（秒）', save: '保存', saved: '已保存', close: '关闭',
     confirmation: '起播确认', delivery: '收到音频或新的设备进度', reported: '相信输出报告的播放状态',
     playOnce: '加载后补发一次播放动作', end: '设备结束时报告的状态', weak: '允许无可靠进度时按结束状态续播',
@@ -92,7 +92,7 @@ Object.assign(words.en, {browse:'Library', lyrics:'Now playing', queue:'Play que
   shuffleOn:'Shuffle play', shuffleOff:'Play in order', closeVolume:'Close volume',
   fullscreen:'Full screen', exitFullscreen:'Exit full screen', fullscreenError:'Full screen could not open. Try opening Home Assistant in a browser.',
   lyricEarlier:'Lyrics earlier by 0.5 s', lyricLater:'Lyrics later by 0.5 s', lyricCentre:'Centre this lyric without seeking', lyricSeek:'Play from', lyricSeekUnavailable:'This output cannot seek the current track', lyricReset:'Reset lyrics offset', lyricDefault:'Lyrics timing reset',
-  showLyrics:'Show lyrics', showArtwork:'Show artwork', lyricWaiting:'Waiting for playback position',
+  compactDetached:'External playback · Play to resume', compactFailed:'Playback failed · Play to retry', compactOffline:'Output offline', compactEmpty:'Choose music', compactWaiting:'Waiting for position', lyricWaiting:'Waiting for playback position',
   repeatOff:'Repeat off', repeatOne:'Repeat one', repeatAll:'Repeat all'});
 Object.assign(words.zh, {browse:'音乐库', lyrics:'正在播放', queue:'播放队列',
   track:'歌曲', album:'专辑', artist:'歌手', playlist:'歌单', tracks:'歌曲', albums:'专辑', artists:'歌手', playlists:'歌单',
@@ -102,7 +102,7 @@ Object.assign(words.zh, {browse:'音乐库', lyrics:'正在播放', queue:'播�
   shuffleOn:'随机播放', shuffleOff:'顺序播放', closeVolume:'关闭音量',
   fullscreen:'全屏', exitFullscreen:'退出全屏', fullscreenError:'无法进入全屏，可尝试在浏览器中打开 Home Assistant。',
   lyricEarlier:'歌词提前 0.5 秒', lyricLater:'歌词延后 0.5 秒', lyricCentre:'居中此句歌词，不跳转播放', lyricSeek:'从此处播放', lyricSeekUnavailable:'当前输出无法定位这首歌', lyricReset:'重置歌词偏移', lyricDefault:'歌词偏移已恢复默认',
-  showLyrics:'显示歌词', showArtwork:'显示封面', lyricWaiting:'等待播放进度',
+  compactDetached:'其他来源播放 · 点播放继续', compactFailed:'播放失败 · 点播放重试', compactOffline:'设备离线', compactEmpty:'等待选曲', compactWaiting:'等待播放进度', lyricWaiting:'等待播放进度',
   repeatOff:'循环关闭', repeatOne:'单曲循环', repeatAll:'列表循环'});
 // HA supplies the media class; category folders can be recognized by their media-source path.
 export function mediaKind(item) {
@@ -114,7 +114,7 @@ export function mediaKind(item) {
 const icons = {
   mode:'sequence', previous:'previous', play:'play', pause:'pause', next:'next', stop:'stop', shuffle:'shuffle', repeat:'repeat',
   fullscreen:'fullscreen', exitFullscreen:'fullscreen-exit', browse:'library', settings:'settings', remove:'close', close:'close', up:'arrow-up', down:'arrow-down',
-  add:'playlist-add', playnext:'play-next', back:'arrow-left', home:'home', more:'more', minimize:'arrow-down',
+  add:'playlist-add', playnext:'play-next', back:'arrow-left', pagePrevious:'arrow-left', pageNext:'arrow-right', home:'home', more:'more', minimize:'arrow-down',
   queue:'queue', lyrics:'now-playing', album:'disc', artist:'artist', playlist:'playlist', track:'music-note',
   volume:'volume', search:'search', clear:'trash', save:'check', retry:'refresh', jump:'play', trackInfo:'music-note',
   lyricEarlier:'lyric-earlier', lyricLater:'lyric-later',
@@ -157,8 +157,8 @@ export class FeiNiuMusicCard extends Base {
     if(config.display_mode&&!['compact','full'].includes(config.display_mode))throw new Error('display_mode must be compact or full');
     if(config.compact_view&&!['simple','lyrics','auto'].includes(config.compact_view))throw new Error('compact_view must be simple, lyrics or auto');
     if(config.compact_background&&!['default','artwork'].includes(config.compact_background))throw new Error('compact_background must be default or artwork');
+    if(config.compact_mask&&!['soft','glass'].includes(config.compact_mask))throw new Error('compact_mask must be soft or glass');
     if(config.entity!==this._config?.entity){this._lyricResultKey='';this._lyrics=[];this._lyricText='';}
-    this._compactOverride=null;
     this._finishExpanded(false);
     this._queueEpoch++; this._lyricEpoch++; this._lyricPendingKey='';this._browseEpoch++; this._queueAgain=this._queuePending;
     this._stopViewTransition();this._clearLyricInteraction();this._offsetEdit=null;
@@ -168,7 +168,7 @@ export class FeiNiuMusicCard extends Base {
   }
   getCardSize() { return this._config?.display_mode==='compact'?(this._compactRich?8:5):12; }
   getGridOptions() { return this._config?.display_mode==='compact'?{columns:12,min_columns:9,rows:this._compactRich?7:5,min_rows:this._compactRich?7:5}:{columns:12,rows:12,min_columns:6,min_rows:8}; }
-  static getStubConfig(hass) { return {entity:Object.keys(hass.states).find(id=>id.startsWith('media_player.')&&hass.states[id].attributes.feiniu_queue),display_mode:'compact',compact_view:'auto',compact_background:'artwork',theme:'dark'}; }
+  static getStubConfig(hass) { return {entity:Object.keys(hass.states).find(id=>id.startsWith('media_player.')&&hass.states[id].attributes.feiniu_queue),display_mode:'compact',compact_view:'auto',compact_background:'artwork',compact_mask:'soft',theme:'dark'}; }
   static getConfigElement(){return document.createElement('feiniu-music-card-editor');}
   set hass(value) {
     this._hass = value;
@@ -189,7 +189,7 @@ export class FeiNiuMusicCard extends Base {
   }
   get _state() { return this._hass?.states[this._config?.entity]; }
   get _compactHome(){return this._config?.display_mode==='compact'&&!this._expanded;}
-  get _compactRich(){return ['lyrics','auto'].includes(this._config?.compact_view);}
+  get _compactRich(){return this._config?.compact_view==='lyrics'||(this._config?.compact_view==='auto'&&!!(this._lyrics?.length||this._lyricText?.trim()));}
   get _lyricsVisible(){return this._compactHome?!!this._compactShowLyrics:this._tab==='lyrics';}
   get _attrs() { return this._state?.attributes || {}; }
   t(key) { return (words[this._hass?.language?.startsWith('zh') ? 'zh' : 'en'][key] || words.en[key] || key); }
@@ -207,7 +207,7 @@ export class FeiNiuMusicCard extends Base {
     loadCardFont();this._queueRows=new Map();this._lyricsPaintKey='';this._compactArtURL='';this._language=this._hass?.language||'en';
     // Constant markup only. Music titles, lyrics and all service data use textContent.
     this.shadowRoot.innerHTML=`<style>${CARD_CSS}${COMPACT_CSS}</style><ha-card class="shell"><img id="ambient" class="ambient" hidden alt=""><div id="compact-background" class="compact-background" aria-hidden="true"><img alt=""><img alt=""></div><span id="now-back" hidden></span>
-      <header class="compact-heading"><div class="compact-labels"><strong id="compact-title" class="truncate"></strong><small id="compact-output" class="truncate"></small></div><span id="compact-toggle"></span><span id="compact-open"></span></header>
+      <header class="compact-heading"><div class="compact-labels"><strong id="compact-title" class="truncate"></strong><small id="compact-output" class="truncate"></small></div><span id="compact-open"></span></header>
       <div class="brand"><span class="brand-mark"><img src="${CARD_BRAND}" alt=""></span><span id="heading"></span></div>
       <header class="topbar"><form class="search"><feiniu-icon icon="mdi:search"></feiniu-icon><input id="search" type="search"><button id="search-go" type="submit"><feiniu-icon icon="mdi:arrow-left" style="transform:rotate(180deg)"></feiniu-icon></button></form><div class="top-tools"><span id="output" class="output-badge truncate"></span><span id="settings-button"></span></div></header>
       <aside class="sidebar"><div class="tabs" role="tablist"></div><nav id="categories" class="categories"></nav><div id="playlist-caption" class="nav-caption"></div><nav id="playlist-nav" class="playlist-nav"></nav><div id="sidebar-note" class="sidebar-bottom"></div></aside>
@@ -221,11 +221,9 @@ export class FeiNiuMusicCard extends Base {
       <div id="track-sheet" class="overlay" hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="track-detail-title"><div class="dialog-header"><h2 id="track-heading"></h2><span id="track-close"></span></div><div id="track-detail-art" class="track-detail-art"></div><h3 id="track-detail-title" class="track-detail-title"></h3><p id="track-detail-sub" class="track-detail-sub"></p><div id="track-actions" class="track-actions"></div><p id="track-hint" class="muted"></p></section></div>
     </ha-card><dialog id="expanded-dialog" class="expanded-dialog"><div id="expanded-frame" class="expanded-frame"><header class="expanded-heading"><span id="expanded-title"></span><span id="expanded-close"></span></header></div></dialog>`;
     const stage=document.createElement('section');stage.id='compact-stage';stage.hidden=true;
-    stage.innerHTML='<button id="compact-artwork"><feiniu-icon icon="mdi:disc"></feiniu-icon><img id="compact-art" hidden alt=""></button><div id="compact-caption"></div>';
     this.shadowRoot.querySelector('.dock').append(stage);this._lyricPanel=this.shadowRoot.querySelector('.lyric-panel');
-    this.$('compact-artwork').setAttribute('aria-label',this.t('lyrics'));this.$('compact-artwork').onclick=()=>this._showTab('lyrics');
-    const toggle=this._button('lyrics',()=>{this._compactOverride=this._compactShowLyrics?'artwork':'lyrics';this._clearLyricInteraction();this._syncCompact();this._lastLine=-1;this._animate();this._queueLyricPaint(true);});
-    this.$('compact-toggle').append(toggle);
+    const status=document.createElement('span');status.id='compact-status';status.hidden=true;status.setAttribute('role','status');
+    this.shadowRoot.querySelector('.progress').append(status);
     const height=Number(this._config.height);if(Number.isFinite(height)&&height>0)this.shadowRoot.querySelector('.shell').style.setProperty('--fn-height',`${Math.max(600,Math.min(1200,height))}px`);
     this.shadowRoot.querySelector('.sidebar').prepend(this.shadowRoot.querySelector('.brand'));
     this.shadowRoot.querySelector('.topbar').prepend(this.$('browse-back'));
@@ -272,7 +270,7 @@ export class FeiNiuMusicCard extends Base {
     this.$('volume').setAttribute('aria-label',this.t('volume'));this._text('volume-label',this.t('volume'));
     this.$('volume').oninput=()=>this._text('volume-value',`${Math.round(Number(this.$('volume').value)*100)}%`);
     this.$('volume').onchange=()=>this._service('volume_set',{volume_level:Number(this.$('volume').value)});
-    for(const id of ['art','mini-art','compact-art'])this.$(id).onerror=()=>{this.$(id).hidden=true;this.$(id).previousElementSibling.hidden=false;};
+    for(const id of ['art','mini-art'])this.$(id).onerror=()=>{this.$(id).hidden=true;this.$(id).previousElementSibling.hidden=false;};
     this.$('browse-back').append(this._button('back',()=>this._back()));
     this.$('search').placeholder=this.t('search');this.$('search').setAttribute('aria-label',this.t('search'));this.$('search-go').setAttribute('aria-label',this.t('searchGo'));
     this.shadowRoot.querySelector('form').onsubmit=e=>{e.preventDefault();const query=this.$('search').value.trim();if(query){this._showTab('browse',false);this._browse(null,true,query);}};
@@ -380,7 +378,7 @@ export class FeiNiuMusicCard extends Base {
     this._text('title',a.media_title || this.t('unknown')); this._text('artist',a.media_artist); this._text('album',a.media_album_name);
     this._text('mini-title',a.media_title||this.t('unknown'));this._text('mini-artist',a.media_artist||this.t('empty'));
     const ambient=safeImage(a.entity_picture||a.media_image_url);if(ambient&&this.$('ambient').getAttribute('src')!==ambient)this.$('ambient').src=ambient;this.$('ambient').hidden=!ambient;
-    for(const id of ['art','mini-art','compact-art'])this._paintImage(id,a.entity_picture||a.media_image_url);
+    for(const id of ['art','mini-art'])this._paintImage(id,a.entity_picture||a.media_image_url);
     const offline=!state || state.state==='unavailable';
     let message=offline ? this.t('offline') : this.t(a.session_reason in words.en ? a.session_reason : (a.session_phase || 'idle'));
     if(a.position_source==='estimated')message+=` · ${this.t('estimated')}`;
@@ -406,7 +404,7 @@ export class FeiNiuMusicCard extends Base {
     const key=`${this._config.entity}/${a.queue_revision}/${JSON.stringify(a.playback_profile)}`;
     if(key!==this._key){this._key=key;this._refreshQueue();}
     const lyricKey=`${this._config.entity}/${a.playback_round}/${a.queue_item_id}`;
-    if(lyricKey!==this._lyricKey){this._lyricKey=lyricKey;this._compactOverride=null;this._refreshLyrics();}
+    if(lyricKey!==this._lyricKey){this._lyricKey=lyricKey;this._refreshLyrics();}
     if(!this._compactHome&&this._tab==='browse'&&!this._browseResult&&!this._browseStarted)this._browse();
     this._syncCompact();this._renderLyricTools();this._animate();
   }
@@ -436,8 +434,9 @@ export class FeiNiuMusicCard extends Base {
   }
   _paintLyricDepth(){
     const box=this.$('lyric-lines');if(!this._lyricsVisible||!box?.clientHeight||!this._lyrics.length)return;
-    // Use the allocated panel height: old padding must not keep a resized box tall.
-    const padding=`${box.parentElement.getBoundingClientRect().height/2}px`;if(box.style.getPropertyValue('--lyric-pad')!==padding)box.style.setProperty('--lyric-pad',padding);
+    // Use the allocated panel height so old scroll padding cannot preserve a taller viewport.
+    const available=Math.max(0,box.parentElement.getBoundingClientRect().height);
+    const padding=`${available/2}px`;if(box.style.getPropertyValue('--lyric-pad')!==padding)box.style.setProperty('--lyric-pad',padding);
     if(this._lyricResized){this._lyricResized=false;if(!this._lyricsManual)this._centreLyric(this._lastLine);else if(this._selectedLyric!=null)this._centreLyric(this._selectedLyric);}
     const rect=box.getBoundingClientRect(),middle=rect.top+rect.height/2;
     // Batch geometry reads, then update only blur values that actually changed.
@@ -452,6 +451,7 @@ export class FeiNiuMusicCard extends Base {
   }
   _renderLyricTools(){
     if(!this.$('lyric-tools'))return;
+    this._lyricPanel.classList.toggle('timed-lyrics',!!this._lyrics.length);
     this.$('lyric-tools').hidden=!this._lyrics.length;
     const offset=this._lyricOffset,offline=!this._state||this._state.state==='unavailable';
     this.$('lyricEarlier').disabled=offline||!!this._offsetSaving||offset>=30;
@@ -510,7 +510,7 @@ export class FeiNiuMusicCard extends Base {
     }catch(err){if(epoch===this._queueEpoch)this._error(err);}finally{this._queuePending=false;if(this._queueAgain){this._queueAgain=false;setTimeout(()=>this._refreshQueue(),150);}}
   }
   async _refreshLyrics(){
-    if(!this._hass||!this._connected||document.hidden||(this._compactHome&&!this._compactRich))return;
+    if(!this._hass||!this._connected||document.hidden||(this._compactHome&&!['lyrics','auto'].includes(this._config.compact_view)))return;
     const requested=this._lyricKey;
     if(this._lyricResultKey===requested){this._renderLyrics();this._syncCompact();return;}
     if(this._lyricPendingKey===requested)return;
@@ -530,20 +530,19 @@ export class FeiNiuMusicCard extends Base {
     if(!this.$('compact-stage'))return;
     const home=this._compactHome,rich=home&&this._compactRich,stage=this.$('compact-stage'),panel=this._lyricPanel;
     this.shadowRoot.querySelector('.shell').dataset.compactBackground=this._config.compact_background||'default';
+    this.shadowRoot.querySelector('.shell').dataset.compactMask=this._config.compact_mask||'soft';
     this._paintCompactBackground(this._attrs.entity_picture||this._attrs.media_image_url);
     const parent=rich?stage:this.$('now-view');if(panel.parentElement!==parent){parent.append(panel);this._queueLyricPaint(true);}
     const a=this._attrs,phase=a.session_phase,hasTrack=!!a.queue_item_id;
     const unavailable=!this._state||this._state.state==='unavailable';
-    const blocked=unavailable||['loading','detached','failed'].includes(phase)||!hasTrack;
-    const show=rich&&!blocked&&(this._compactOverride==='lyrics'||(!this._compactOverride&&(this._config.compact_view==='lyrics'||this._lyrics.length>0)));
+    const show=rich;
     if(this._compactShowLyrics!==show){this._compactShowLyrics=show;this._lastLine=-1;this._queueLyricPaint(true);}
     panel.hidden=home&&!show;stage.hidden=!rich;
     const shell=this.shadowRoot.querySelector('.shell');shell.classList.toggle('compact-rich',rich);
-    this.$('compact-artwork').hidden=show;this.$('compact-artwork').disabled=!hasTrack;
-    const caption=unavailable?'offline':!hasTrack?'empty':phase==='detached'?'detached':phase==='failed'?'failed':phase==='loading'||this._lyricStatus==='loading'?'loading':this._lyricStatus==='lyricError'?'lyricError':show&&this._lyrics.length&&this._position()==null?'lyricWaiting':'';
-    this._text('compact-caption',caption?this.t(caption):'');this.$('compact-caption').classList.toggle('loading',caption==='loading');
-    const toggle=this.$('compact-toggle').firstChild;this.$('compact-toggle').hidden=!rich;
-    toggle.disabled=blocked;toggle.title=this.t(show?'showArtwork':'showLyrics');toggle.setAttribute('aria-label',toggle.title);toggle.setAttribute('aria-pressed',String(show));toggle.firstChild.setAttribute('icon',show?'mdi:disc':'mdi:lyrics-text');
+    const loading=phase==='loading'&&!(show&&this._lyricStatus==='loading');
+    const caption=unavailable?'compactOffline':!hasTrack?'compactEmpty':phase==='detached'?'compactDetached':phase==='failed'?'compactFailed':loading?'compactLoading':phase!=='loading'&&show&&this._lyrics.length&&this._position()==null?'compactWaiting':'';
+    const status=this.$('compact-status'),text=home&&caption?this.t(caption):'';
+    status.hidden=!text;this._text('compact-status',text);status.title=text;status.classList.toggle('loading',caption==='compactLoading');
   }
   _empty(text){const p=document.createElement('div');p.className='empty';p.textContent=text;return p;}
   _renderContent(){
@@ -583,9 +582,9 @@ export class FeiNiuMusicCard extends Base {
     for(const child of [...root.children])if(!nextRows.has(child.dataset.itemId))child.remove();
     [...nextRows.values()].forEach((row,index)=>{if(root.children[index]!==row)root.insertBefore(row,root.children[index]||null);});
     this._queueRows=nextRows;
-    const pager=document.createElement('div');pager.className='pager';const back=this._button('back',()=>{this._offset=Math.max(0,this._offset-25);this._refreshQueue();});back.disabled=this._offset===0;
+    const pager=document.createElement('div');pager.className='pager';const back=this._button('pagePrevious',()=>{this._offset=Math.max(0,this._offset-25);this._refreshQueue();});back.disabled=this._offset===0;
     const count=document.createElement('span');count.textContent=`${this._queue.total} ${this.t('count')}`;
-    const next=this._button('more',()=>{this._offset+=25;this._refreshQueue();});next.disabled=this._offset+25>=this._queue.total;
+    const next=this._button('pageNext',()=>{this._offset+=25;this._refreshQueue();});next.disabled=this._offset+25>=this._queue.total;
     pager.append(count,back,next);root.append(pager);
   }
   _rowImage(row,value){

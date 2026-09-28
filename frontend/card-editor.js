@@ -7,7 +7,7 @@ export class FeiNiuCardEditor extends (globalThis.HTMLElement || class {}) {
   _render(){
     if(!this._config||!this._hass)return;
     const zh=this._hass.language?.startsWith('zh');
-    const labels=zh?{entity:'飞牛播放器',display_mode:'展示模式',compact_view:'紧凑卡片内容',compact_background:'紧凑卡片背景',title:'标题',theme:'配色',height:'完整界面高度（像素）'}:{entity:'FeiNiu player',display_mode:'Display mode',compact_view:'Compact content',compact_background:'Compact background',title:'Title',theme:'Colors',height:'Full interface height (pixels)'};
+    const labels=zh?{entity:'飞牛播放器',display_mode:'展示模式',compact_view:'紧凑卡片内容',compact_background:'紧凑卡片背景',compact_mask:'蒙版效果',title:'标题',theme:'配色',height:'完整界面高度（像素）'}:{entity:'FeiNiu player',display_mode:'Display mode',compact_view:'Compact content',compact_background:'Compact background',compact_mask:'Overlay effect',title:'Title',theme:'Colors',height:'Full interface height (pixels)'};
     if(!this._form){
       this.shadowRoot.innerHTML='<style>:host{display:block}.hint{color:var(--secondary-text-color);font-size:13px;line-height:1.6;margin:16px 0}</style><ha-form></ha-form><p class="hint"></p>';
       this._form=this.shadowRoot.querySelector('ha-form');
@@ -22,7 +22,7 @@ export class FeiNiuCardEditor extends (globalThis.HTMLElement || class {}) {
     const entities=Object.keys(this._hass.states).filter(id=>id.startsWith('media_player.')&&this._hass.states[id].attributes.feiniu_queue);
     // Retain a configured player even if it is temporarily absent/offline.
     if(this._config.entity&&!entities.includes(this._config.entity))entities.push(this._config.entity);
-    const mode=this._config.display_mode||'full',key=JSON.stringify([zh,mode,entities]);
+    const mode=this._config.display_mode||'full',artwork=this._config.compact_background==='artwork',key=JSON.stringify([zh,mode,artwork,entities]);
     if(this._schemaKey!==key){
       this._schemaKey=key;
       this._form.schema=[
@@ -34,10 +34,14 @@ export class FeiNiuCardEditor extends (globalThis.HTMLElement || class {}) {
         ...(mode==='compact'?[{name:'compact_view',selector:{select:{mode:'dropdown',options:[
           {value:'simple',label:zh?'精简播放器':'Simple player'},
           {value:'lyrics',label:zh?'歌词播放器':'Lyrics player'},
-          {value:'auto',label:zh?'自动 · 有同步歌词时显示':'Auto · show synced lyrics when available'},
+          {value:'auto',label:zh?'自动 · 有歌词显示，无歌词精简':'Auto · lyrics when available, simple otherwise'},
         ]}}},{name:'compact_background',selector:{select:{mode:'dropdown',options:[
           {value:'default',label:zh?'原默认背景与透明度':'Original background and opacity'},
-          {value:'artwork',label:zh?'封面氛围 · 半透明玻璃':'Artwork colors · frosted glass'},
+          {value:'artwork',label:zh?'封面氛围':'Artwork colors'},
+        ]}}}]:[]),
+        ...(mode==='compact'&&artwork?[{name:'compact_mask',selector:{select:{mode:'dropdown',options:[
+          {value:'soft',label:zh?'柔和蒙版 · 默认':'Soft overlay · default'},
+          {value:'glass',label:zh?'通透玻璃':'Translucent glass'},
         ]}}}]:[]),
         {name:'title',selector:{text:{}}},
         {name:'theme',selector:{select:{mode:'dropdown',options:[
@@ -50,11 +54,11 @@ export class FeiNiuCardEditor extends (globalThis.HTMLElement || class {}) {
       this._form.computeHelper=schema=>schema.name==='height'?(zh?'留空时使用页面可用高度。':'Leave empty to use the available page height.'):undefined;
     }
     this._form.hass=this._hass;
-    const data={...this._config,display_mode:mode,compact_view:this._config.compact_view||'simple',compact_background:this._config.compact_background||'default',theme:this._config.theme||'dark'};
+    const data={...this._config,display_mode:mode,compact_view:this._config.compact_view||'simple',compact_background:this._config.compact_background||'default',compact_mask:this._config.compact_mask||'soft',theme:this._config.theme||'dark'};
     if(JSON.stringify(data)!==this._dataKey){this._dataKey=JSON.stringify(data);this._form.data=data;}
     this.shadowRoot.querySelector('.hint').textContent=zh
-      ?'精简模式保留小播放器；歌词与自动模式使用固定高度，切歌不会撑动页面。点封面或展开按钮打开完整界面。起播与续播设置请到集成配置中调整。'
-      :'Simple keeps a small player; lyrics and auto keep a stable height across tracks. Open the artwork or expand button for the full interface. Playback compatibility is configured in the integration.';
+      ?'自动模式有歌词时显示歌词播放器，没有歌词时恢复精简卡片；歌词模式无歌词时显示提示。点封面或展开按钮打开完整界面。起播与续播设置请到集成配置中调整。'
+      :'Auto shows a lyrics player when lyrics exist and a simple card otherwise. Lyrics mode shows a message when none exist. Open the artwork or expand button for the full interface. Playback compatibility is configured in the integration.';
   }
 }
 if(globalThis.customElements&&!customElements.get('feiniu-music-card-editor'))customElements.define('feiniu-music-card-editor',FeiNiuCardEditor);

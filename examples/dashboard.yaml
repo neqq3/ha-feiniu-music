@@ -1,4 +1,4 @@
-# Register /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-lyrics-2 as a JavaScript module first.
+# Register /feiniu_music/feiniu-music-card.js?v=0.3.0-compact-layout-1 as a JavaScript module first.
 # Replace these entity IDs with the fixed FeiNiu entities created from selected outputs.
 title: FeiNiu Music
 views:
@@ -10,6 +10,7 @@ views:
         display_mode: compact
         compact_view: auto
         compact_background: artwork
+        compact_mask: soft
         theme: dark
       - type: custom:feiniu-music-card
         entity: media_player.feiniu_study

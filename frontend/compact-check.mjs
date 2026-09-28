@@ -9,7 +9,7 @@ export async function checkCompact(sourcePage){
     await first.locator('#mini-open').waitFor();
     assert.deepEqual(await page.evaluate(()=>messages),[],'Collapsed dashboard cards do not load the library, queue pages or lyrics');
     assert(await first.evaluate(c=>c.getCardSize()===5&&c.getGridOptions().rows===5));
-    assert.deepEqual(await first.evaluate(c=>c.constructor.getStubConfig(hass)),{entity:'media_player.feiniu_a',display_mode:'compact',compact_view:'auto',compact_background:'artwork',theme:'dark'});
+    assert.deepEqual(await first.evaluate(c=>c.constructor.getStubConfig(hass)),{entity:'media_player.feiniu_a',display_mode:'compact',compact_view:'auto',compact_background:'artwork',compact_mask:'soft',theme:'dark'});
     const initial=await first.boundingBox();assert(initial.height<300&&initial.height>180,'Compact card has content-sized height');
     assert.equal(await first.locator('.compact-heading>feiniu-icon').count(),0,'The compact title has no leading music-note icon');
     assert.equal(await first.locator('.shell').evaluate(e=>getComputedStyle(e).backdropFilter),'none','Existing compact YAML keeps the original background and opacity');
@@ -39,7 +39,19 @@ export async function checkCompact(sourcePage){
     assert.equal(await first.locator('#mini-open').evaluate(e=>e===e.getRootNode().activeElement),true,'Closing returns keyboard focus to its opener');
     assert.equal(Math.round((await first.boundingBox()).height),Math.round(initial.height));
     await first.locator('#dock-tools .queue-toggle').click();await first.locator('.queue-row').first().waitFor();
-    assert.equal(await first.locator('.queue-row').count(),3);await first.locator('#expanded-close button').click();
+    assert.equal(await first.locator('.queue-row').count(),3);
+    await page.evaluate(()=>{models.a.total=26;document.querySelector('feiniu-music-card')._refreshQueue();});
+    const pager=first.locator('.pager');await pager.getByRole('button',{name:'下一页',exact:true}).waitFor();
+    assert(await pager.getByRole('button',{name:'上一页',exact:true}).isDisabled());
+    assert.deepEqual(await pager.locator('feiniu-icon').evaluateAll(es=>es.map(e=>e.getAttribute('icon'))),['mdi:arrow-left','mdi:arrow-right']);
+    await pager.getByRole('button',{name:'下一页',exact:true}).click();
+    await page.waitForFunction(()=>messages.filter(m=>m.type==='feiniu_music/queue').at(-1).offset===25);
+    assert(await pager.getByRole('button',{name:'下一页',exact:true}).isDisabled());
+    await pager.getByRole('button',{name:'上一页',exact:true}).click();
+    await page.waitForFunction(()=>messages.filter(m=>m.type==='feiniu_music/queue').at(-1).offset===0);
+    assert.equal(await page.evaluate(()=>calls.length),beforeOpen,'Pagination only reads queue pages');
+    await page.evaluate(()=>{models.a.total=3;document.querySelector('feiniu-music-card')._refreshQueue();});
+    await first.locator('#expanded-close button').click();
     await first.locator('#compact-open button').click();await first.locator('.tile').first().waitFor();
     assert(await first.locator('#browser').isVisible());
     for(const width of [1000,390]){
