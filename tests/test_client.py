@@ -56,6 +56,21 @@ async def test_validated_range_probe_rejects_business_json() -> None:
         await client.media_prefix("audio", "synthetic-id", limit=4096, validate=True)
 
 
+async def test_audio_start_keeps_request_token_snapshot_during_login() -> None:
+    """A concurrent login may clear the client field while audio pacing yields."""
+    client = client_with(Response(b"fLaC" + b"x" * 4092))
+    client._token = "synthetic-old"
+
+    async def throttle(lane):
+        assert lane == "audio"
+        client._token = None
+
+    client._throttle = throttle
+    stream = client.audio_stream("synthetic-id")
+    assert (await anext(stream)).startswith(b"fLaC")
+    await stream.aclose()
+
+
 async def test_error_json_is_bounded_and_unrelated_code_is_not_permission() -> None:
     """An oversized body stops at the prefix limit; 100004 remains generic elsewhere."""
     response = Response(b'{"code":100004,"msg":"' + b"x" * 100000)

@@ -17,6 +17,7 @@ from homeassistant.components.media_player import (
 from homeassistant.components.media_source import MediaSourceItem
 from homeassistant.setup import async_setup_component
 
+from custom_components.feiniu_music.artwork import CachedImage, resize_image
 from custom_components.feiniu_music.client import FeiNiuClient, ProtocolProfile
 from custom_components.feiniu_music.const import DOMAIN
 from custom_components.feiniu_music.http import (
@@ -29,7 +30,7 @@ from custom_components.feiniu_music.http import (
 from custom_components.feiniu_music.media_source import FeiNiuMediaSource
 from custom_components.feiniu_music.runtime import ARTWORK_LIFETIME, FeiNiuRuntime
 
-from .conftest import track
+from .conftest import image_bytes, track
 
 pytestmark = pytest.mark.enable_socket
 AUDIO = b"fLaC" + bytes(range(256)) * 600
@@ -236,8 +237,8 @@ async def test_dlna_artwork_survives_uri_limit_and_ha_image_proxy(
     player._attr_media_image_url = returned.album_art_uri[:256]
     await hass.data[DATA_COMPONENT].async_add_entities([player])
     response = await browser.get(player.entity_picture)
-    assert response.status == 200 and response.content_type == "image/png"
-    assert await response.read() == image
+    assert response.status == 200 and response.content_type == "image/webp"
+    assert await response.read() == resize_image(CachedImage.build(image), 512).data
     client.cover.assert_awaited_once_with("cover-one")
     client.page.assert_not_called()
 
@@ -293,12 +294,16 @@ async def test_image_revalidation_checks_owner_before_304(delivery, runtime, mon
     clock = [100.0]
     monkeypatch.setattr("custom_components.feiniu_music.runtime.monotonic", lambda: clock[0])
     runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
-    runtime.client.cover = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n" + b"synthetic image")
+    runtime.client.cover = AsyncMock(return_value=image_bytes())
     token = runtime.grant_artwork("track", "track-one", "cover-one")
     path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/artwork?token={token}"
     first = await browser.get(path)
-    assert first.status == 200 and await first.read() == runtime.client.cover.return_value
-    assert first.headers["Cache-Control"] == "private, no-cache"
+    assert (
+        first.status == 200
+        and await first.read()
+        == resize_image(CachedImage.build(runtime.client.cover.return_value), 512).data
+    )
+    assert first.headers["Cache-Control"] == "private, max-age=30, must-revalidate"
     etag = first.headers["ETag"]
     for condition in (etag, f"W/{etag}", "*"):
         repeated = await browser.get(path, headers={"If-None-Match": condition})
@@ -319,19 +324,59 @@ async def test_image_changed_after_cache_expiry_returns_new_body(delivery, runti
     browser, _, _, _, _ = delivery
     clock = [100.0]
     monkeypatch.setattr("custom_components.feiniu_music.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("custom_components.feiniu_music.artwork.time", lambda: clock[0])
     runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
-    runtime.client.cover = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nold")
+    runtime.client.cover = AsyncMock(return_value=image_bytes("red"))
     path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/{runtime.scope}/image/track/track-one/cover-one"
     path = async_sign_path(runtime.hass, path, timedelta(minutes=10))
     first = await browser.get(path)
     assert first.status == 200
     etag = first.headers["ETag"]
     clock[0] += COVER_TTL
-    runtime.client.cover.return_value = b"\x89PNG\r\n\x1a\nnew"
+    runtime.client.cover.return_value = image_bytes("blue")
     changed = await browser.get(path, headers={"If-None-Match": etag})
     assert changed.status == 200 and changed.headers["ETag"] != etag
-    assert await changed.read() == runtime.client.cover.return_value
+    assert (
+        await changed.read()
+        == resize_image(CachedImage.build(runtime.client.cover.return_value), 256).data
+    )
     assert runtime.client.cover.await_count == 2
+
+
+async def test_thumbnail_cache_window_cannot_outlive_signed_url(delivery, runtime):
+    browser, _, _, _, _ = delivery
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
+    runtime.client.cover = AsyncMock(return_value=image_bytes())
+    path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/{runtime.scope}/image/track/track-one/cover-one"
+    signed = async_sign_path(runtime.hass, path + "?size=128", timedelta(seconds=3))
+    response = await browser.get(signed)
+    assert response.status == 200
+    assert response.headers["Cache-Control"].startswith("private, max-age=")
+    max_age = int(response.headers["Cache-Control"].split("max-age=")[1].split(",")[0])
+    assert 0 <= max_age <= 3
+    expired = async_sign_path(runtime.hass, path, timedelta(seconds=-1))
+    assert (await browser.get(expired)).status == 401
+    changed = signed.replace("size=128", "size=512")
+    assert (await browser.get(changed)).status == 401
+    unsupported = async_sign_path(runtime.hass, path + "?size=4096", timedelta(minutes=1))
+    assert (await browser.get(unsupported)).status == 400
+    runtime.client.cover.assert_awaited_once()
+
+
+async def test_short_grant_cache_window_cannot_outlive_token(delivery, runtime, monkeypatch):
+    browser, _, _, _, _ = delivery
+    clock = [100.0]
+    monkeypatch.setattr("custom_components.feiniu_music.runtime.monotonic", lambda: clock[0])
+    runtime.client.detail.return_value = {"track": track(coverId="cover-one")}
+    runtime.client.cover = AsyncMock(return_value=image_bytes())
+    token = runtime.grant_artwork("track", "track-one", "cover-one")
+    clock[0] += ARTWORK_LIFETIME - 2
+    path = f"/api/{DOMAIN}/{runtime.entry.entry_id}/artwork?token={token}"
+    response = await browser.get(path)
+    assert response.status == 200
+    assert response.headers["Cache-Control"] == "private, max-age=2, must-revalidate"
+    clock[0] += 2
+    assert (await browser.get(path)).status == 404
 
 
 async def test_disconnected_image_request_cancels_unneeded_download(

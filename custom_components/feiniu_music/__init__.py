@@ -116,7 +116,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: FeiNiuConfigEntry) -> 
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: FeiNiuConfigEntry) -> None:
-    """Permanent account deletion removes only that account's saved queues."""
+    """Permanent account deletion removes only that account's queues and image cache."""
+    from .artwork import ArtworkCache
     from .storage import QueueStorage
 
     await QueueStorage(hass, entry.entry_id).delete()
+    await ArtworkCache.for_entry(hass, entry).delete()

@@ -6,18 +6,21 @@ import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url);
 const {chromium} = require('playwright');
 const card = await readFile(new URL('./feiniu-music-card.js',import.meta.url));
+let imageRequests=0;
 const server = createServer((req,res)=>{
+  if(req.url.startsWith('/cover.svg')){imageRequests++;res.setHeader('Content-Type','image/svg+xml');res.setHeader('Cache-Control','private, max-age=30');res.end('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><path fill="#457" d="M0 0h64v64H0z"/></svg>');return;}
   res.setHeader('Content-Type',req.url==='/card.js'?'text/javascript; charset=utf-8':'text/html; charset=utf-8');
   res.end(req.url==='/card.js'?card:String.raw`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:10px;background:var(--primary-background-color,#f4f6f8);font-family:system-ui}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:16px}feiniu-music-card{min-width:0}</style></head><body><div class="grid"></div><script type="module">
   import '/card.js';
   window.calls=[];window.messages=[];window.linesDeferred=null;
   window.models={a:{revision:1,offset:0,total:3,current_id:'a-0',position:0,items:[{item_id:'a-0',track_id:'one',title:'After the rain',artist:'Synthetic ensemble',current:true},{item_id:'a-1',track_id:'two',title:'<img src=x onerror="window.injected=true">',artist:'Text, not HTML'},{item_id:'a-2',track_id:'three',title:'夜空中的回声',artist:'合成测试音乐'}],diagnostics:{phase:'playing',profile:{confirmation:'delivery',play_once:false,end_state:'idle',weak_end:false}}}};
+  models.a.items.forEach((item,i)=>item.thumbnail='/cover.svg?i='+i);
   window.models.b=structuredClone(window.models.a);models.b.items.forEach(x=>x.item_id=x.item_id.replace('a','b'));models.b.current_id='b-0';
   window.hass={language:'zh-Hans',user:{is_admin:true},states:{},callService:async(domain,service,data)=>{calls.push({domain,service,data});},callWS:async(msg)=>{
     messages.push(msg);let key=msg.entity_id.endsWith('_b')?'b':'a';
     if(msg.type==='feiniu_music/queue'){if(window.queueDeferred)return new Promise(resolve=>{window.releaseQueue=resolve;});return structuredClone(models[key]);}
     if(msg.type==='feiniu_music/lyrics'){if(linesDeferred)return new Promise(resolve=>{window.releaseLyrics=resolve;});return {text:'A quiet room\nA familiar song',synced_lines:[{time_ms:0,text:'A quiet room'},{time_ms:4000,text:'A familiar song'}]};}
-    if(msg.type==='media_player/browse_media')return {title:'Music library',children:[{title:'Evening playlist',media_content_id:'media-source://feiniu_music/account/playlist/list',media_content_type:'playlist',can_expand:true,can_play:true}]};
+    if(msg.type==='media_player/browse_media')return {title:'Music library',children:[{title:'Evening playlist',thumbnail:'/cover.svg?browse=1',media_content_id:'media-source://feiniu_music/account/playlist/list',media_content_type:'playlist',can_expand:true,can_play:true}]};
     if(msg.type==='media_player/search_media')return {result:[{title:'Search single',media_content_id:'media-source://feiniu_music/account/track/one',media_content_type:'music',can_play:true}]};
     if(msg.type==='feiniu_music/edit_queue'){if(msg.revision!==models[key].revision)throw {code:'revision_conflict'};models[key].revision++;hass.states[msg.entity_id].attributes.queue_revision++;document.querySelectorAll('feiniu-music-card').forEach(c=>c.hass=hass);return {revision:models[key].revision};}
     return {saved:true};
@@ -37,6 +40,24 @@ try{
  await page.evaluate(async()=>{const c=document.querySelector('feiniu-music-card');window.queueDeferred=true;c._queue=null;c._key='';c.hass=hass;await Promise.resolve();const release=window.releaseQueue;c.remove();document.querySelector('.grid').prepend(c);window.queueDeferred=false;release(structuredClone(models.a));});
  await first.locator('.row').first().waitFor();
  assert.equal(await first.locator('.row').count(),3,'Reattached card must leave Loading state');
+ await page.setViewportSize({width:1100,height:960});
+ await page.waitForFunction(()=>[...document.querySelector('feiniu-music-card').shadowRoot.querySelectorAll('.row img')].every(img=>img.complete&&img.naturalWidth>0));
+ const loadedImages=imageRequests;
+ assert(await page.evaluate(async()=>{
+   const c=document.querySelector('feiniu-music-card'),rows=[...c.shadowRoot.querySelectorAll('.row')],images=rows.map(r=>r.querySelector('img'));
+   const mutations=[];const observer=new MutationObserver(records=>mutations.push(...records));
+   images.forEach(img=>observer.observe(img,{attributes:true,attributeFilter:['src']}));
+   await c._refreshQueue();await Promise.resolve();
+   const stable=rows.every((r,i)=>c.shadowRoot.querySelectorAll('.row')[i]===r&&r.querySelector('img')===images[i]);
+   // Same track appearing twice still has separate occurrence IDs and nodes.
+   c._queue.items[1].track_id=c._queue.items[0].track_id;
+   c._queue.items.reverse();c._renderContent();
+   const reordered=rows.every(r=>c.shadowRoot.contains(r));
+   c._queue.items.reverse();c._renderContent();await Promise.resolve();observer.disconnect();
+   return stable&&reordered&&mutations.length===0;
+ }),'Queue refresh/reorder must retain occurrence nodes and image src attributes');
+ assert.equal(imageRequests,loadedImages,'Unchanged queue refresh must not reload images');
+ await page.setViewportSize({width:390,height:844});
  assert.equal(await page.evaluate(()=>window.injected),undefined);
  assert.equal(await first.locator('.row .name img').count(),0);
  assert.equal(await page.evaluate(()=>calls.length),0,'Rendering must not control outputs');
@@ -44,6 +65,7 @@ try{
  await second.locator('#button-stop').click();assert.equal(await page.evaluate(()=>calls.at(-1).data.entity_id),'media_player.feiniu_b');
  await first.getByRole('tab',{name:'歌词',exact:true}).click();await first.locator('#lyric-lines p').first().waitFor();
  await first.getByRole('tab',{name:'选择音乐',exact:true}).click();assert.equal(await first.getByRole('button',{name:'Evening playlist',exact:true}).count(),1);await first.getByRole('button',{name:'加入队列',exact:true}).click();
+ assert.equal(await first.locator('#browse-list .row img').count(),1,'Browse uses the supplied HA thumbnail');
  assert.equal(await page.evaluate(()=>calls.at(-1).data.enqueue),'add');
  assert.equal(await page.evaluate(()=>calls.at(-1).data.media_content_id),'media-source://feiniu_music/account/playlist/list');
  await first.getByRole('tab',{name:'队列',exact:true}).click();

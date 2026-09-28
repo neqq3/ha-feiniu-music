@@ -1,8 +1,10 @@
 """Synthetic HA fixtures. No NAS, account, or production HA is required."""
 
+from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from PIL import Image
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.feiniu_music.const import DOMAIN
@@ -59,3 +61,10 @@ def track(guid="track-one", **kwargs):
         "audioSpec": {"format": "flac"},
         **kwargs,
     }
+
+
+def image_bytes(color="red", size=(640, 480)):
+    """Actual synthetic pixels exercise Pillow, not a fake image magic prefix."""
+    result = BytesIO()
+    Image.new("RGB", size, color).save(result, "PNG")
+    return result.getvalue()

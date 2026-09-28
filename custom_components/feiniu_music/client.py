@@ -202,8 +202,11 @@ class FeiNiuClient:
         self._timeout = timeout
         self._session: aiohttp.ClientSession | None = None
         self._token: str | None = None
-        self._lock = asyncio.Lock()
-        self._last_request = 0.0
+        # Bound starts separately from response reads. Slow artwork must not own
+        # the interactive/audio lanes; password logins retain the origin lock.
+        self._slots = {kind: asyncio.Semaphore(4) for kind in ("interactive", "artwork")}
+        self._start_locks = {kind: asyncio.Lock() for kind in ("interactive", "artwork", "audio")}
+        self._last_request = dict.fromkeys(self._start_locks, 0.0)
         self._session_factory = session_factory
         self._acquire = acquire
 
@@ -216,7 +219,7 @@ class FeiNiuClient:
             timeout=aiohttp.ClientTimeout(total=self._timeout, connect=min(5, self._timeout)),
             cookie_jar=aiohttp.DummyCookieJar(),
             trust_env=False,
-            connector=aiohttp.TCPConnector(limit=2),
+            connector=aiohttp.TCPConnector(limit=16),
         )
         return self
 
@@ -375,7 +378,9 @@ class FeiNiuClient:
         status, _, data = await self._request(
             "GET",
             "/static/cover",
-            params={"coverId": identifier},
+            # Official Music 1.0.1 web UI uses this size enum (160/600/1024/...).
+            # A 600 px source also serves local 128/256/512 px variants.
+            params={"coverId": identifier, "size": 600},
             limit=8 * 1024 * 1024,
             signed=False,
         )
@@ -390,15 +395,15 @@ class FeiNiuClient:
             raise ValueError("Client not open or missing track ID")
         if not self._token:
             raise AuthenticationError("No active session")
-        async with self._lock:
-            await self._throttle()
+        token = self._token
+        await self._throttle("audio")
         url = (
             self._origin + self._profile.prefix + "/track/stream?" + urlencode({"guid": identifier})
         )
         try:
             async with self._session.get(
                 url,
-                headers={"Cookie": "music-token=" + quote(self._token, safe="")},
+                headers={"Cookie": "music-token=" + quote(token, safe="")},
                 allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=None, connect=5, sock_read=30),
             ) as response:
@@ -450,8 +455,7 @@ class FeiNiuClient:
         }
         if byte_range:
             headers["Range"] = byte_range
-        async with self._lock:
-            await self._throttle()
+        await self._throttle("audio")
         url = (
             self._origin + self._profile.prefix + "/track/stream?" + urlencode({"guid": identifier})
         )
@@ -584,9 +588,11 @@ class FeiNiuClient:
         params: Mapping[str, str | int] | None = None,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        request_token = self._token
         status, _, data = await self._request(method, path, params=params, body=body)
         if status == 401:
-            self._token = None
+            if self._token == request_token:
+                self._token = None
             raise AuthenticationError(f"HTTP {status}")
         if status == 403:
             raise PermissionDeniedError("Operation denied")
@@ -606,7 +612,9 @@ class FeiNiuClient:
             raise ProtocolError("Invalid response envelope")
         code = result["code"]
         if code in {120001, 120002}:
-            self._token = None
+            # An older in-flight failure must not erase a newly installed session.
+            if self._token == request_token:
+                self._token = None
             raise AuthenticationError(f"API code {code}")
         if code == 100005:
             raise NotFoundError("API code 100005")
@@ -646,8 +654,9 @@ class FeiNiuClient:
         url = self._origin + full_path
         if params:
             url += "?" + urlencode(params, quote_via=quote)
-        async with self._lock:
-            await self._throttle()
+        lane = "artwork" if path == "/static/cover" else "interactive"
+        async with self._slots[lane]:
+            await self._throttle(lane)
             if self._token and authenticated:
                 headers["Cookie"] = "music-token=" + quote(self._token, safe="")
             try:
@@ -684,9 +693,11 @@ class FeiNiuClient:
                     ) from None
                 raise NetworkError("HTTP connection failed or timed out", backoff_time=30) from err
 
-    async def _throttle(self) -> None:
-        if self._acquire:
-            await self._acquire()
-        else:
-            await asyncio.sleep(max(0, 0.25 - (time.monotonic() - self._last_request)))
-        self._last_request = time.monotonic()
+    async def _throttle(self, lane: str = "interactive") -> None:
+        """Limit each lane to 20 starts/second, without holding a response lock."""
+        async with self._start_locks[lane]:
+            if self._acquire:
+                await self._acquire()
+            else:
+                await asyncio.sleep(max(0, 0.05 - (time.monotonic() - self._last_request[lane])))
+            self._last_request[lane] = time.monotonic()

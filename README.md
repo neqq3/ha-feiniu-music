@@ -28,7 +28,7 @@
 设置 → 仪表盘 → 资源中添加（需开启用户高级模式）：
 
 ```yaml
-url: /feiniu_music/feiniu-music-card.js?v=0.2.0
+url: /feiniu_music/feiniu-music-card.js?v=0.2.1
 type: module
 ```
 
@@ -110,9 +110,21 @@ HA Store 按账号保存选中输出的队列顺序、偏好和可用的 native 
   支持 Artist → Tracks 以及 Artist → Albums。
 - 完整分页完成后才返回，途中失败不会缓存半份成功结果；播放前重新读取 track metadata。
 - 列表/关系/搜索缓存 30 秒，最多 16 份/10,000 行；详情 30 秒/128 项。
-  封面源缓存 5 分钟/512 张/32 MiB；并发下载合并，图片请求限制为 2 路，避免阻塞浏览。
+  owner 索引最多 10,000 项，直接查找精确关联，不逐张遍历曲库。命中不会延长权限期限。
+  元数据和图片分别最多 4 个请求，按独立通道控制请求开始频率；音频启动不排在图片后面。
+  同服务器登录仍串行，认证失败仍有界重试。
+  原生 600 像素源图按需生成 128/256/512 像素 WebP，浏览默认 256，播放器默认 512。
+  不增加运行时依赖，使用 HA 自带 Pillow，在执行器中处理图片。
+  源图内存最多 32 MiB/512 张；资源热缓存最多 16 MiB/512 项。
+  `.storage/feiniu_music_artwork` 下每个 entry/账号独立缓存最多 128 MiB/2,048 个文件，
+  资源期限 1 小时；重载/重启保留，移除来源清理该来源的文件。文件名仅含哈希。
+  相同封面下载/缩略图生成合并，失败短缓存 30 秒；没有全库后台预抓。
   owner 权限和精确 owner→cover 关联始终在取图前检查；缓存命中不等于重新授权。
-  封面使用稳定短期路径和 ETag 条件请求；冷加载仍受飞牛原生请求限流影响。
+  封面使用稳定短期路径和预先计算的 ETag。浏览器采用 private 缓存，其 max-age
+  不超过剩余 30 秒权限证据及签名/短令牌期限；不沿用 NAS 的 public 缓存头。
+  权限证据过期只重新验权，不因此丢掉图片文件。已看过的资源可跨重载/重启复用，
+  但账号/owner 的当前检查始终先于磁盘或内存返回，不能保证撤回已经交付的图片。
+  卡片按队列出现项 ID 复用行和图片节点；同一地址不重复设置 src，浏览页复用同一缩略图入口。
 - 歌词缓存每账号 32 首/5 分钟，读取前验权；切歌后的迟到歌词被丢弃，失败不停止音频。
 - 每个输出每轮使用独立 HA 音频路径。Stop/切歌撤销本轮，不中断同账号其它输出；
   保留 HEAD、单 Range、206/416、背压和请求取消。没有新增 FFmpeg/转码服务器。
@@ -142,7 +154,7 @@ an independent queue; the original `media_source` remains available for direct s
 No Music Assistant, bridge, NAS administrator access, external database or transcoding service is required.
 
 Install `custom_components/feiniu_music`, restart HA, add the integration and select outputs.
-Register `/feiniu_music/feiniu-music-card.js?v=0.2.0` as a Lovelace JavaScript module and add
+Register `/feiniu_music/feiniu-music-card.js?v=0.2.1` as a Lovelace JavaScript module and add
 `type: custom:feiniu-music-card` with the fixed FeiNiu `entity` ID. The optional card provides
 queue editing, native browsing/search, lyrics, controls and per-output compatibility preferences.
 Chinese and English are included. The backend remains authoritative, including with multiple browsers.
@@ -168,8 +180,13 @@ unconfirmed startup halt automatic control and retain the queue. Optional PAUSED
 profiles can misinterpret manual device-side pauses/stops. Integration leases coordinate only FeiNiu
 sessions, not external controllers or different protocol entities for the same physical speaker.
 
-Caches are account-scoped and bounded: browse/detail 30 seconds, artwork/lyrics 5 minutes. Cached or
-already delivered content cannot be instantly recalled. Account isolation is not HA-user library ACL.
+Caches are account-scoped and bounded: browse/detail/access evidence 30 seconds, lyrics 5 minutes,
+and image resources 1 hour. Persistent source/128/256/512 px thumbnails share a 128 MiB/2,048-file
+cap per entry/account; memory resources are also bounded. Current owner access is checked before
+cached pixels, including after reload/restart. Browser private max-age cannot outlive the remaining
+30-second access evidence or signed-link/grant expiry. Separate, limited request lanes prevent image
+downloads from serializing metadata/audio startup. Cached or already delivered content cannot be
+instantly recalled. Account isolation is not HA-user library ACL.
 The card's queue API enforces HA entity permissions and revisions. Music credentials remain server-side;
 HA playback URLs are short-lived access grants and should not be logged or shared. Diagnostics omit them.
 The private repository must remain accessible to an installer; HACS metadata does not make it public.

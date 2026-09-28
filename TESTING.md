@@ -1,4 +1,98 @@
-# Verification — complete experience candidate 0.2.0
+# Verification — artwork delivery candidate 0.2.1
+
+## Artwork and browse checks (2026-09-28)
+
+Environment: the existing isolated HA Core 2026.9.4 container, Python 3.14.6,
+Pillow 12.3.0 already supplied by HA, unchanged dependencies. The tests run in a
+separate candidate directory without NAS credentials. The running test integration
+was updated only after these checks passed.
+
+| Check | Actual result |
+| --- | --- |
+| Targeted artwork, request-lane, HTTP, browse and client tests | 145 passed |
+| `python -m pytest tests -o addopts=--strict-markers -q --timeout=30` | 296 passed in 5.51 s |
+| `ruff check custom_components tests` | Passed |
+| `ruff format --check custom_components tests` | 43 files already formatted |
+| `MYPYPATH=/usr/src/homeassistant mypy custom_components/feiniu_music` | 23 source files, no issues |
+| `npm test` | 4 passed |
+| `node frontend/build.mjs` | Generated the bundled card |
+| `node frontend/browser-check.mjs` | Passed, including keyed row/image reuse and browse thumbnails |
+| `git diff --check` | Passed |
+
+The loopback HTTP test holds four distinct image responses open while metadata and
+audio startup finish, and verifies that a fifth image has not started. Another test
+delivers an old authentication failure after a new token has been installed: four
+requests recover with one login. The cache tests cover persistence, expiry, byte/file
+bounds, corruption, negative caching, entry/account isolation, exact owner binding,
+fresh access checks before disk reads, source age preservation, cancellation, entry
+unload/removal and disk-I/O fallback. HTTP tests retain signed-path/session checks and
+exercise ETag/304, fixed thumbnail sizes and cache lifetimes bounded by access evidence
+and signed-link/player-grant expiry. The browser harness checks actual DOM identity,
+unchanged image `src` and request count, duplicate queue occurrences and reordering.
+
+### Actual service and HA timing
+
+Normal music-account access to Music 1.0.1 (0.8.41), 164 tracks, 139 albums, 128 artists,
+two playlists (150 and 13 entries). Counts and ordering matched across repeated reads.
+The comparison baseline is `fc81992`; the same account, service and HA were used.
+"Cold" means absent from the HA cache, not a cleared NAS/OS cache. Timings below are
+HTTP/WebSocket elapsed time, not browser paint or speaker audibility.
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| Tracks root, cold / immediate repeat | 266 / 4.55 ms | 65 / 2.79 ms |
+| Albums root, cold / repeat | 492 / 3.05 ms | 95 / 3.75 ms |
+| Artists root, cold / repeat | 496 / 3.23 ms | 95 / 3.67 ms |
+| Playlists root, cold / repeat | 241 / 0.44 ms | 40 / 0.69 ms |
+| 150-entry playlist, cold / repeat | 507 / 6.59 ms | 108 / 4.97 ms |
+| Search, cold / repeat | 253 / 0.68 ms | 49 / 0.88 ms |
+| First eight cold covers | 2,001 ms | 371 ms |
+| Next 20 distinct cold covers | 5,009 ms | 1,045 ms |
+| All 144 distinct cover IDs, segmented cold reads | 43.01 s | 7.63 s |
+| Eight covers immediately repeated | 4.08 ms | 3.29 ms |
+| Eight covers after more than five minutes | 2,005 ms | 3.97 ms |
+| Eight persisted covers after HA restart | Not available | 7.95 ms |
+| Eight persisted covers after integration reload | Not available | 5.97 ms |
+
+Grid requests have at most four consumers, with a 50 ms scroll pause after each eight
+items; they are not a 164-request fan-out. The 20-image timings include 100 ms of
+intentional pauses. The full cold total is the sum of the 8, 20 and 116-image cohorts;
+it includes 800 ms of intentional pauses. Whole-grid warm/304 passes were 1.070/1.068 s,
+including 850 ms of deliberate scrolling. The 144 response bodies totaled 19,240,872
+bytes before and 2,009,478 bytes after resizing. This measures HA-to-client image bodies,
+not total network traffic. There are 144 distinct cover IDs, not a claim of 144 distinct
+pixel contents; the earlier 139-image report used a different uniqueness criterion.
+
+The later eight-image read was 347 seconds after the main after-run. Restart and reload
+left all 424 existing resource files (14,232,019 bytes) unchanged in size and mtime. An
+independent runtime with per-operation request counters fetched the first eight images
+in 370 ms (eight native cover GETs); hot reads took 0.23 ms and a new runtime's disk reads
+took 4.44 ms, both with zero cover GETs. It read 8,458,772 native image body bytes for the
+144-ID cold pass; this is application response data, not a packet capture.
+
+With 29–34 image requests still pending, actual HA Play/Next service calls to an
+explicitly authorized silent simulated output took 102/99 ms and reached the expected
+queue occurrences. Album/artist navigation took 18/51 ms and a cached lyric request
+0.55 ms. An independent runtime's uncached lyrics took 49 ms; its 4 KiB audio startup
+took 1.53 ms while images loaded. These are bounded in-memory delivery/state checks,
+not decoding or listening tests. No real-speaker control command was sent. The original
+output options were restored and verified; account credentials/device IDs were unchanged.
+
+The final source is deployed to the standalone test HA. Restart was explicitly authorized;
+integration reload was checked without autoplay. No production HA/MA, NAS permissions,
+music files or playlists were changed. No new background image prefetch was introduced.
+
+### Limits
+
+Only this service/HA version and library size were exercised live. Large libraries,
+long-running disk eviction under load and other service versions remain unverified.
+The one-hour resource TTL is bounded, not permanent; a changed image with the same cover
+ID can remain stale until expiry. Access evidence and browser max-age remain at most
+30 seconds; bytes already delivered to a client cannot be recalled. Permission and
+cross-account regression tests are offline; this run did not alter real account rights.
+Read-only live diagnostics/counters and their outputs remain outside the repository.
+
+## Preserved 0.2.0 verification
 
 ## Current candidate checks (2026-09-28, local only)
 

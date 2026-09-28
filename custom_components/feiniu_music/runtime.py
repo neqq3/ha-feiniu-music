@@ -7,6 +7,7 @@ import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 from functools import partial
 from time import monotonic
@@ -21,12 +22,15 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.http import current_request
 
+from .artwork import ArtworkCache, CachedImage, resize_image
 from .client import (
     AuthenticationError,
     FeiNiuClient,
+    NetworkError,
     NotFoundError,
     PermissionDeniedError,
     ProtocolError,
+    RateLimitError,
 )
 from .const import CONF_ACCOUNT_ID, CONF_DEVICE_ID, PAGE_SIZE
 from .lyrics import parse_lyrics
@@ -34,7 +38,7 @@ from .streaming import AudioRound
 
 ARTWORK_LIFETIME = 2 * 60 * 60
 MAX_ARTWORK_GRANTS = 128
-COVER_TTL = 5 * 60
+COVER_TTL = 60 * 60
 MAX_COVER_BYTES = 32 * 1024 * 1024
 MAX_COVERS = 512
 BROWSE_TTL = 30
@@ -106,7 +110,12 @@ class FeiNiuRuntime:
         self._covers: dict[str, tuple[float, bytes]] = {}
         self._cover_tasks: dict[str, asyncio.Task[bytes]] = {}
         self._cover_waiters: dict[asyncio.Task[bytes], int] = {}
-        self._image_slots = asyncio.Semaphore(2)
+        self._image_slots = asyncio.Semaphore(4)
+        self._cover_owners: dict[tuple[str, str], tuple[float, dict[str, Any], set[str]]] = {}
+        self.artwork_cache = ArtworkCache.for_entry(hass, entry)
+        self._thumbnail_tasks: dict[tuple[str, int], asyncio.Task[CachedImage]] = {}
+        self._thumbnail_waiters: dict[asyncio.Task[CachedImage], int] = {}
+        self._image_failures: dict[str, tuple[float, type[Exception]]] = {}
         self._browse_results: dict[tuple[str, ...], tuple[float, str, list[dict[str, Any]]]] = {}
         self._browse_lock = asyncio.Lock()
         self._thumbnail_paths: dict[tuple[str | None, str], tuple[float, str]] = {}
@@ -143,6 +152,9 @@ class FeiNiuRuntime:
         self._details.clear()
         self._lyrics.clear()
         self._covers.clear()
+        self._cover_owners.clear()
+        self.artwork_cache.clear_memory()
+        self._image_failures.clear()
         self._browse_results.clear()
         self._thumbnail_paths.clear()
 
@@ -194,6 +206,7 @@ class FeiNiuRuntime:
                 # Metadata carries audioSpec beside track, unlike some list responses.
                 row = {**row, "audioSpec": data.get("audioSpec") or row.get("audioSpec") or {}}
         except NotFoundError, PermissionDeniedError, ProtocolError:
+            self._cover_owners.pop(key, None)
             # A newly observed refusal supersedes an earlier successful browse.
             for cache_key, (_, row_kind, rows) in list(self._browse_results.items()):
                 if row_kind == kind and any(item["guid"] == guid for item in rows):
@@ -202,6 +215,7 @@ class FeiNiuRuntime:
         if len(self._details) >= 128:
             self._details.pop(next(iter(self._details)))
         self._details[key] = (monotonic(), deepcopy(row))
+        self._remember_owner(kind, row, self._details[key][0])
         return row
 
     async def pages(
@@ -298,6 +312,8 @@ class FeiNiuRuntime:
                     self._browse_results.pop(next(iter(self._browse_results)))
                 # Start the TTL before fetching, not after a potentially slow pagination.
                 self._browse_results[key] = (now, kind, deepcopy(rows))
+                for row in rows:
+                    self._remember_owner(kind, row, now)
             return rows
 
     async def search(self, kind: str, query: str) -> list[dict[str, Any]]:
@@ -308,20 +324,25 @@ class FeiNiuRuntime:
             lambda: self.pages(lambda page: self.client.search(kind, query, page, PAGE_SIZE)),
         )
 
+    def _remember_owner(self, kind: str, row: dict[str, Any], created: float) -> None:
+        """Index only completed scoped reads; hits cannot renew access evidence."""
+        key = (kind, row["guid"])
+        old = self._cover_owners.get(key)
+        if old and old[0] > created:
+            return
+        self._cover_owners.pop(key, None)
+        while len(self._cover_owners) >= MAX_BROWSE_ROWS:
+            self._cover_owners.pop(next(iter(self._cover_owners)))
+        self._cover_owners[key] = (created, deepcopy(row), cover_ids(row))
+
     def _cover_owner(self, kind: str, guid: str) -> dict[str, Any] | None:
-        """Reuse fresh, server-filtered browse rows for exact artwork ownership only."""
-        now = monotonic()
-        newest = now - BROWSE_TTL
-        owner = None
-        if (cached := self._details.get((kind, guid))) and cached[0] > newest:
-            newest, owner = cached
-        for created, row_kind, rows in self._browse_results.values():
-            if row_kind != kind or created <= newest:
-                continue
-            for row in rows:
-                if row["guid"] == guid:
-                    newest, owner = created, row
-                    break
+        """O(1) lookup of fresh native evidence, separate from image resource lifetime."""
+        key = (kind, guid)
+        cached = self._cover_owners.get(key)
+        if cached and monotonic() - cached[0] >= BROWSE_TTL:
+            self._cover_owners.pop(key)
+            cached = None
+        owner = cached[1] if cached else None
         if owner is not None and kind == "track" and "accessStatus" in owner:
             require_track(owner)
         # Music 1.0.1 collection/search/album/artist rows are account-filtered;
@@ -350,16 +371,85 @@ class FeiNiuRuntime:
 
     async def cover(self, kind: str, guid: str, cover: str) -> bytes:
         """A currently accessible owner cannot authorize an unrelated cover identifier."""
-        # Limit image traffic entering the client's shared request queue, so navigating
-        # away from a large grid does not put navigation/audio behind every thumbnail.
         async with self._image_slots:
-            self.check_open()
-            row = self._cover_owner(kind, guid)
-            if row is None or cover not in cover_ids(row):
-                row = await self.detail(kind, guid)
+            await self.authorize_cover(kind, guid, cover)
+            return await self._cover_data(cover)
+
+    async def authorize_cover(self, kind: str, guid: str, cover: str) -> None:
+        """Validate an exact owner before consulting either memory or disk pixels."""
+        self.check_open()
+        row = self._cover_owner(kind, guid)
+        evidence = self._cover_owners.get((kind, guid))
+        if row is None or evidence is None or cover not in evidence[2]:
+            row = await self.detail(kind, guid)
             if cover not in cover_ids(row):
                 raise PermissionDeniedError("Image does not belong to this media item")
-            return await self._cover_data(cover)
+
+    def image_max_age(self, kind: str, guid: str) -> int:
+        """Do not extend the existing 30-second permission window in a browser."""
+        evidence = self._cover_owners.get((kind, guid))
+        return max(0, int(BROWSE_TTL - (monotonic() - evidence[0]))) if evidence else 0
+
+    async def thumbnail(self, kind: str, guid: str, cover: str, size: int) -> CachedImage:
+        """Share bounded source/resize jobs after every caller's owner check."""
+        async with self._image_slots:
+            await self.authorize_cover(kind, guid, cover)
+            key = (cover, size)
+            if (task := self._thumbnail_tasks.get(key)) is None:
+                task = self.hass.async_create_task(
+                    self._fetch_thumbnail(cover, size), "FeiNiu thumbnail", eager_start=False
+                )
+                self._thumbnail_tasks[key] = task
+            self._thumbnail_waiters[task] = self._thumbnail_waiters.get(task, 0) + 1
+            try:
+                result = await asyncio.shield(task)
+                self.check_open()
+                return result
+            finally:
+                self._thumbnail_waiters[task] -= 1
+                if not self._thumbnail_waiters[task]:
+                    self._thumbnail_waiters.pop(task)
+                    if self._thumbnail_tasks.get(key) is task:
+                        self._thumbnail_tasks.pop(key)
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+    async def _fetch_thumbnail(self, cover: str, size: int) -> CachedImage:
+        cache = self.artwork_cache
+        key = cache.key(cover, size)
+        if value := await cache.get(key):
+            return value
+        if (failure := self._image_failures.get(cover)) and monotonic() < failure[0]:
+            raise failure[1]("Artwork temporarily unavailable")
+        self._image_failures.pop(cover, None)
+        try:
+            source_key = cache.key(cover)
+            source = await cache.get(source_key)
+            new_source = source is None
+            if source is None:
+                data = await self._cover_data(cover)
+                source = CachedImage.build(data)
+                if cached := self._covers.get(cover):
+                    # Persist the age of reused source bytes, not a fresh hour.
+                    source = replace(
+                        source, created=source.created - max(0, monotonic() - cached[0])
+                    )
+            value = await cache.executor(resize_image, source, size)
+            if new_source:
+                await cache.put(source_key, source)
+            await cache.put(key, value)
+            return value
+        except (NotFoundError, ProtocolError, NetworkError, RateLimitError) as err:
+            if isinstance(err, ProtocolError):
+                # Invalid pixels must be retried after the short negative window,
+                # not retained as a usable source for an hour.
+                self._covers.pop(cover, None)
+            # Store only the class, not a traceback, response or authentication error.
+            if len(self._image_failures) >= MAX_COVERS:
+                self._image_failures.pop(next(iter(self._image_failures)))
+            self._image_failures[cover] = (monotonic() + 30, type(err))
+            raise
 
     async def _cover_data(self, cover: str) -> bytes:
         """Share downloads while at least one authorized consumer still needs them."""
@@ -448,6 +538,11 @@ class FeiNiuRuntime:
             raise NotFoundError("Artwork link expired or unavailable")
         return grant[1], grant[2], grant[3]
 
+    def artwork_max_age(self, token: str) -> int:
+        """A browser cache cannot outlive the short player artwork grant."""
+        grant = self._artwork_grants.get(token)
+        return max(0, int(grant[0] - monotonic())) if grant else 0
+
     @asynccontextmanager
     async def activity(self) -> AsyncIterator[None]:
         """Let entry unload cancel active HTTP deliveries and release their responses."""
@@ -470,15 +565,22 @@ class FeiNiuRuntime:
         self._details.clear()
         self._lyrics.clear()
         self._covers.clear()
+        self._cover_owners.clear()
+        self.artwork_cache.clear_memory()
+        self._image_failures.clear()
         self._browse_results.clear()
         self._thumbnail_paths.clear()
         self._artwork_grants.clear()
-        tasks = list((self._active | set(self._cover_tasks.values())) - {asyncio.current_task()})
+        tasks = list(
+            (self._active | set(self._cover_tasks.values()) | set(self._thumbnail_tasks.values()))
+            - {asyncio.current_task()}
+        )
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._cover_tasks.clear()
+        self._thumbnail_tasks.clear()
         await self.client.__aexit__(None, None, None)
 
     def check_open(self) -> None:

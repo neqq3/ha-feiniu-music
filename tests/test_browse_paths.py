@@ -214,8 +214,8 @@ async def test_last_cancelled_consumer_releases_download_immediately(runtime, cl
 
 
 async def test_image_concurrency_keeps_navigation_out_of_thumbnail_backlog(runtime, client):
-    rows = [track(str(i), coverId=str(i)) for i in range(3)]
-    client.page.return_value = {"list": rows, "total": 3}
+    rows = [track(str(i), coverId=str(i)) for i in range(5)]
+    client.page.return_value = {"list": rows, "total": 5}
     await runtime.collection("track")
     started = asyncio.Event()
     active = 0
@@ -223,7 +223,7 @@ async def test_image_concurrency_keeps_navigation_out_of_thumbnail_backlog(runti
     async def fetch(cover):
         nonlocal active
         active += 1
-        if active == 2:
+        if active == 4:
             started.set()
         try:
             await asyncio.Event().wait()
@@ -231,11 +231,11 @@ async def test_image_concurrency_keeps_navigation_out_of_thumbnail_backlog(runti
             active -= 1
 
     client.cover.side_effect = fetch
-    requests = [asyncio.create_task(runtime.cover("track", str(i), str(i))) for i in range(3)]
+    requests = [asyncio.create_task(runtime.cover("track", str(i), str(i))) for i in range(5)]
     await started.wait()
-    assert client.cover.await_count == 2
-    # Navigation proceeds while both image slots are occupied; third image stays out
-    # of the native client's shared request queue altogether.
+    assert client.cover.await_count == 4
+    # Navigation proceeds while four image slots are occupied; the fifth waits
+    # outside the native client's interactive request lane.
     client.playlists.return_value = []
     assert await runtime.collection("playlist") == []
     client.playlists.assert_awaited_once()

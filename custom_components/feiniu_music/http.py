@@ -1,14 +1,16 @@
 """Authenticated HA endpoints for original audio and owner-bound artwork."""
 
 import asyncio
-import hashlib
 import re
+from time import time
 
 import aiohttp
+import jwt
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
+from .artwork import SIZES
 from .client import (
     AuthenticationError,
     FeiNiuError,
@@ -17,7 +19,6 @@ from .client import (
     PermissionDeniedError,
     RateLimitError,
     StreamRejectedError,
-    classify_media,
 )
 from .const import DOMAIN, KINDS
 from .media import mime_type, valid_id
@@ -254,32 +255,60 @@ class FeiNiuArtworkView(HomeAssistantView):
         if runtime is None:
             raise web.HTTPNotFound
         try:
-            kind, guid, cover = runtime.artwork_owner(request.query.get("token", ""))
-            return await image_response(runtime, kind, guid, cover, request)
+            token = request.query.get("token", "")
+            kind, guid, cover = runtime.artwork_owner(token)
+            return await image_response(
+                runtime,
+                kind,
+                guid,
+                cover,
+                request,
+                max_age=runtime.artwork_max_age(token),
+                default_size=512,
+            )
         except FeiNiuError as err:
             raise http_error(err) from err
 
 
 async def image_response(
-    runtime: FeiNiuRuntime, kind: str, guid: str, cover: str, request: web.Request
+    runtime: FeiNiuRuntime,
+    kind: str,
+    guid: str,
+    cover: str,
+    request: web.Request,
+    *,
+    max_age: int = 30,
+    default_size: int = 256,
 ) -> web.Response:
     """Both image URL forms use the same owner check and authenticated native request."""
+    try:
+        size = int(request.query.get("size", str(default_size)))
+    except ValueError as err:
+        raise web.HTTPBadRequest(text="Unsupported thumbnail size") from err
+    if size not in SIZES:
+        raise web.HTTPBadRequest(text="Unsupported thumbnail size")
     async with runtime.activity():
-        data = await runtime.cover(kind, guid, cover)
-    content_type = {"jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[
-        classify_media(data)
-    ]
-    etag = hashlib.sha256(data).hexdigest()
+        image = await runtime.thumbnail(kind, guid, cover, size)
+    max_age = min(max_age, runtime.image_max_age(kind, guid))
+    if signature := request.query.get("authSig"):
+        # HA's middleware already authenticates the signature and exact path.
+        # Read exp only to shorten cache lifetime, never to grant access.
+        try:
+            expires = jwt.decode(signature, options={"verify_signature": False})["exp"]
+            max_age = min(max_age, max(0, int(expires - time())))
+        except jwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError:
+            max_age = 0
+    etag = image.etag
     headers = {
-        # Revalidate owner access even when the browser already has the image.
-        "Cache-Control": "private, no-cache",
+        "Cache-Control": f"private, max-age={max_age}, must-revalidate",
+        "Vary": "Authorization, Cookie",
         "ETag": f'"{etag}"',
         "X-Content-Type-Options": "nosniff",
     }
     if request.if_none_match and any(tag.value in {etag, "*"} for tag in request.if_none_match):
         return web.Response(status=304, headers=headers)
     return web.Response(
-        body=data,
-        content_type=content_type,
+        body=image.data,
+        content_type=image.content_type,
         headers=headers,
     )
