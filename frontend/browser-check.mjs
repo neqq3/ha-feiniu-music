@@ -45,7 +45,12 @@ const server = createServer((req,res)=>{
     if(msg.type==='feiniu_music/queue'){if(window.queueDeferred)return new Promise(resolve=>{window.releaseQueue=resolve;});return structuredClone(models[key]);}
     if(msg.type==='feiniu_music/lyrics'){if(linesDeferred)return new Promise(resolve=>{window.releaseLyrics=resolve;});return window.lyricFixture||{text:'A quiet room\nA familiar song',synced_lines:[{time_ms:0,text:'A quiet room'},{time_ms:4000,text:'A familiar song'}]};}
     if(msg.type==='media_player/browse_media'){if(window.failBrowse)throw {code:'unavailable'};return fixtureBrowse(msg);}
-    if(msg.type==='media_player/search_media')return {result:[{title:'Search single',media_content_id:'media-source://feiniu_music/account/track/one',media_content_type:'music',can_play:true}]};
+    if(msg.type==='media_player/search_media'){
+      // Match HA's public WebSocket contract; permissive mocks hid a wrong key.
+      if(typeof msg.search_query!=='string'||'media_search_query' in msg)throw {code:'invalid_format'};
+      if(msg.search_query==='retry-once'&&!window.searchRetried){window.searchRetried=true;throw {code:'unavailable'};}
+      return {result:msg.search_query==='no-match'?[]:[{title:'Search single',media_content_id:'media-source://feiniu_music/account/track/one',media_content_type:'music',can_play:true}]};
+    }
     if(msg.type==='feiniu_music/edit_queue'){if(msg.revision!==models[key].revision)throw {code:'revision_conflict'};models[key].revision++;hass.states[msg.entity_id].attributes.queue_revision++;document.querySelectorAll('feiniu-music-card').forEach(c=>c.hass=hass);return {revision:models[key].revision};}
     return {saved:true};
   }};
@@ -133,6 +138,17 @@ try{
  await first.locator('#search').fill('single');await first.locator('#search').press('Enter');
  await first.locator('#browse-list').getByRole('button',{name:'Search single',exact:true}).waitFor();
  assert.equal(await first.locator('#browse-heading h1').textContent(),'single');
+ assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='media_player/search_media').at(-1)),{type:'media_player/search_media',entity_id:'media_player.feiniu_a',search_query:'single'});
+ await first.locator('#search').fill('retry-once');await first.locator('#search').press('Enter');
+ await first.locator('#browse-list').getByRole('button',{name:'重试',exact:true}).click();
+ await first.locator('#browse-list').getByRole('button',{name:'Search single',exact:true}).waitFor();
+ assert.equal(await first.locator('#browse-heading h1').textContent(),'retry-once');
+ assert.equal(await first.locator('#browse-list').getByRole('button',{name:'重试',exact:true}).count(),0,'Successful search retry clears the error');
+ await first.locator('#search').fill('no-match');await first.locator('#search').press('Enter');
+ await first.locator('#browse-list').getByText('没有找到音乐。',{exact:true}).waitFor();
+ assert.equal(await first.locator('#browse-list').getByRole('button',{name:'重试',exact:true}).count(),0,'No matches is a normal empty result, not a failed operation');
+ await first.locator('#search').fill('single');await first.locator('#search').press('Enter');
+ await first.locator('#browse-list').getByRole('button',{name:'Search single',exact:true}).waitFor();
  await showTab(first,'播放队列');
  await first.locator('#content .row').nth(1).getByRole('button',{name:'向后移动',exact:true}).click();
  assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/edit_queue').at(-1).item_id),'a-1');

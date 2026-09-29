@@ -804,7 +804,7 @@ export class FeiNiuMusicCard extends Base {
     this.$('browse-list').replaceChildren(this._empty(this.t('loading')));this.$('browse-all').replaceChildren();
     try{
       const data=item?{media_content_id:item.media_content_id,media_content_type:item.media_content_type}:{};
-      let result=await this._call(query?'media_player/search_media':'media_player/browse_media',{...data,...(query?{media_search_query:query}:{})});
+      let result=await this._call(query?'media_player/search_media':'media_player/browse_media',{...data,...(query?{search_query:query}:{})});
       if(epoch!==this._browseEpoch||!this._connected)return;
       if(query)result={title:query,children:result.result||[]};
       if(!item&&!query){this._roots=result.children||[];this._renderNav();this._loadPlaylists();}
