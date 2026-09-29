@@ -18,7 +18,7 @@
   "requirements": [
     "python-didl-lite==1.5.1"
   ],
-  "version": "0.2.2",
+  "version": "1.0.0",
   "documentation": "https://github.com/neqq3/ha-feiniu-music",
   "issue_tracker": "https://github.com/neqq3/ha-feiniu-music/issues"
 }

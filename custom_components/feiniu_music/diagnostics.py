@@ -30,7 +30,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: FeiNiuC
                 }
             )
     return {
-        "integration_version": "0.2.0",
+        "integration_version": "1.0.0",
         "ha_version": HA_VERSION,
         "queue_storage_corrupt": manager.storage.corrupt if manager else None,
         "sessions": sessions,

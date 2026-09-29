@@ -100,7 +100,7 @@ theme: dark
 lovelace:
   resource_mode: yaml
   resources:
-    - url: /feiniu_music/feiniu-music-card.js?v=0.2.2
+    - url: /feiniu_music/feiniu-music-card.js?v=1.0.0
       type: module
 ```
 
