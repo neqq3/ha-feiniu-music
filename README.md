@@ -34,7 +34,7 @@
 
 ## 安装
 
-请使用 Home Assistant 2026.9.4 或更新版本，并先将音箱接入 HA。
+请使用 **Home Assistant 2025.12.2 或更新版本**，并先将音箱接入 HA。
 
 ### 通过 HACS 安装
 
@@ -59,7 +59,7 @@
 
 ## HA 原生媒体源（media_source）
 
-集成也会在 HA 的 **媒体（Media sources）** 中提供 **FeiNiu Music** 入口。选择账号后，可以按歌曲、专辑、歌手和歌单浏览曲库，也支持搜索。
+集成也会在 HA 的 **媒体（Media sources）** 中提供 **FeiNiu Music** 入口。选择账号后，可以按歌曲、专辑、歌手和歌单浏览曲库。原生媒体源的搜索入口取决于 HA 版本；飞牛音乐卡片和集成生成的飞牛播放器均支持搜索。
 
 ![Home Assistant 原生媒体源中的 FeiNiu Music](docs/images/media-source.png)
 
@@ -94,14 +94,11 @@ compact_mask: soft
 theme: dark
 ```
 
-如果你使用 YAML 管理仪表盘**资源**（`resource_mode: yaml`），需要自行在 `configuration.yaml` 的 `lovelace.resources` 中添加下面这项；已有 `lovelace` 配置时合并进去：
+如果你使用 YAML 管理仪表盘**资源**，需要把下面这一项加入 `configuration.yaml` 中已有的 `lovelace.resources` 列表，保留原来的模式设置：
 
 ```yaml
-lovelace:
-  resource_mode: yaml
-  resources:
-    - url: /feiniu_music/feiniu-music-card.js?v=1.0.0
-      type: module
+- url: /feiniu_music/feiniu-music-card.js?v=1.0.1
+  type: module
 ```
 
 只有资源由 YAML 管理时需要这一步，卡片配置使用 YAML 不受影响。升级后相应修改 `v` 参数并重载资源。
@@ -172,6 +169,8 @@ cards:
 
 暂停、音量、进度跳转和音频格式支持取决于底层音箱及其 HA 集成。音频由音箱解码，本集成不提供转码。
 
+旧版 HA（包括 2025.12.2）自带的 DLNA 库在队列播放时可能不向音箱传递封面，因此音箱自身的屏幕可能没有专辑图；HA 卡片内的封面和歌词不受影响。
+
 ## 常见问题
 
 - **登录方式**：目前使用普通飞牛音乐账号登录，暂不支持 FN ID 和 NAS OAuth。
@@ -197,8 +196,12 @@ Use the bundled card as a compact dashboard player, open its library and lyrics 
 
 The compact card offers simple, lyrics, and automatic modes. Automatic mode shows lyrics when available and collapses to the simple player otherwise; lyrics mode keeps the lyrics area and shows a message when lyrics are unavailable. Backgrounds and appearance are configurable in the visual editor.
 
-Requires **Home Assistant 2026.9.4 or newer**. Connect your speakers to HA first, then add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Add the integration under **Settings → Devices & services**, sign in with a regular FeiNiu Music account, and select your speakers. FN ID and NAS OAuth are not supported.
+Requires **Home Assistant 2025.12.2 or newer**. Connect your speakers to HA first, then add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Add the integration under **Settings → Devices & services**, sign in with a regular FeiNiu Music account, and select your speakers. FN ID and NAS OAuth are not supported.
+
+The card and generated FeiNiu players support search on all supported HA versions. Search in HA's global native media-source browser depends on the HA version.
 
 The bundled card registers and updates automatically. After setting up the integration, refresh your browser and add a **FeiNiu Music** card through the visual editor. Only YAML-managed dashboard resources require the manual resource entry above. **Both compact cards and full music pages must use the FeiNiu player entity created by this integration for the chosen account and speaker—not an arbitrary media player or the underlying speaker entity.** See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.
 
 Startup and track-end behavior can be configured separately for each FeiNiu player in the integration's options, without installing the card. Seeking and audio format support depend on the speaker and its HA integration; this integration does not transcode audio.
+
+The DLNA library bundled with older HA versions, including 2025.12.2, may omit artwork during queue playback, so the speaker's own display may not show the album cover. Artwork and lyrics in the HA card are unaffected.

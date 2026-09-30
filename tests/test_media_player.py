@@ -1,6 +1,7 @@
 """Exercise queues against real HA entity services and state events, without a NAS."""
 
 import asyncio
+from importlib.metadata import version
 from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from xml.etree import ElementTree as ET
@@ -192,8 +193,15 @@ async def test_queue_metadata_survives_actual_dlna_serialization(hass, player, r
     assert fields["title"].text == "Title one"
     assert fields["artist"].text == "Artist"
     assert fields["album"].text == "Album"
-    assert fields["albumArtURI"].text == play.await_args.kwargs["extra"]["thumb"]
-    assert len(fields["albumArtURI"].text) < 256
+    artwork = play.await_args.kwargs["extra"]["thumb"]
+    assert artwork and len(artwork) < 256
+    if version("python-didl-lite").startswith("1.4."):
+        # HA's older DLNA serializer drops artwork on direct URL playback.
+        # This documented speaker-display limitation must not affect HA's card.
+        assert "albumArtURI" not in fields
+        assert controller.media_image_url == artwork + "&size=1024"
+    else:
+        assert fields["albumArtURI"].text == artwork
     assert fields["res"].attrib["protocolInfo"] == "http-get:*:audio/flac:*"
 
 
