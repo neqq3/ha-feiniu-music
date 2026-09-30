@@ -16,7 +16,7 @@
   "integration_type": "service",
   "iot_class": "local_polling",
   "requirements": [
-    "python-didl-lite==1.5.1"
+    "python-didl-lite>=1.4.0,<2.0"
   ],
   "version": "1.0.0",
   "documentation": "https://github.com/neqq3/ha-feiniu-music",

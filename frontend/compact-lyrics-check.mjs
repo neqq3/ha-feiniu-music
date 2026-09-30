@@ -241,6 +241,10 @@ export async function checkCompactLyrics(sourcePage){
     assert.deepEqual(await mobile.evaluate(()=>calls.map(c=>c.service)),['media_seek','media_play'],'Touch timestamp hits seek, never an overlapping offset button');
     assert.equal(await mobile.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').length),0);
     const services=await mobile.evaluate(()=>calls.length);
+    // Seeking resumes lyric following and hides touch tools. Reveal them again
+    // through the visible lyric, just as a user would, before adjusting the offset.
+    await card.locator('.lyric-row.current p').tap();
+    await mobile.waitForFunction(()=>getComputedStyle(document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-tools')).opacity==='1');
     await card.locator('#lyricEarlier').tap();
     assert.deepEqual(await mobile.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').map(m=>m.lyric_offset)),[.5],'Left offset control sends only the display offset');
     assert.equal(await mobile.evaluate(()=>calls.length),services,'Adjusting the offset does not seek or change playback');

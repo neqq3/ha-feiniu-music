@@ -246,6 +246,33 @@ async def test_ws_queue_pages_preserve_duplicates_and_reject_stale_or_cross_enti
     assert "SYNTHETIC_PASSWORD" not in str(response) and "authSig" not in str(page["diagnostics"])
 
 
+async def test_card_search_uses_actual_ha_websocket_contract(
+    hass, installed, entry, client, hass_ws_client
+):
+    """Card/proxy search works even before HA added global media-source search."""
+    manager, outputs = installed
+    player = next(iter(manager.entities.values()))
+    client.search.return_value = {"list": [track("showtime", title="Showtime!")], "total": 1}
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "media_player/search_media",
+            "entity_id": player.entity_id,
+            "media_content_id": f"media-source://{DOMAIN}/{entry.entry_id}/track",
+            "media_content_type": "music",
+            "search_query": "showtime",
+        }
+    )
+    response = await ws.receive_json()
+    assert response["success"], response
+    (result,) = response["result"]["result"]
+    assert result["title"] == "Showtime!" and result["can_play"]
+    assert result["media_content_id"] == uri(entry, "showtime")
+    client.search.assert_awaited_once_with("track", "showtime", 1, 100)
+    assert not any(output.calls for output in outputs)
+
+
 async def test_ws_respects_entity_read_and_output_control_permissions(
     hass, installed, entry, hass_ws_client, hass_admin_user
 ):
