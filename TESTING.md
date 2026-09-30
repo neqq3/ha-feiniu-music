@@ -1,5 +1,33 @@
 # Verification
 
+## Running the compatibility checks
+
+GitHub Actions runs the same integration suite against HA 2025.12.2 / Python 3.13
+and HA 2026.9.4 / Python 3.14. Each job uses its matching pytest plugin and installs
+component dependencies from that HA version's own manifests. Tests use synthetic
+accounts and outputs; they do not need NAS credentials or access to a real HA instance.
+
+For a local Linux environment, use Python 3.13 with `requirements-test-min.txt`,
+or Python 3.14 with `requirements-test.txt`:
+
+```sh
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-test-min.txt
+python scripts/install_test_dependencies.py
+python -m pytest tests --timeout=30
+ruff check custom_components tests scripts
+ruff format --check custom_components tests scripts
+mypy --python-version 3.13 custom_components/feiniu_music
+```
+
+Use `--python-version 3.14` for mypy when testing HA 2026.9.4, whose own source
+requires Python 3.14. Ruff always checks our source against the Python 3.13 baseline.
+
+The frontend job runs `npm test`, rebuilds and compares the bundled card, then runs
+`npm run test:browser` with Playwright Chromium. Browser checks cover compact/full
+layouts, touch controls, search, lyrics, and the visual editor using synthetic HA messages.
+
 ## Automatic card registration — 0.2.2
 
 - HA 2026.9.4 regression suite: **316 passed**, including eight resource registration tests.

@@ -10,7 +10,7 @@ from custom_components.feiniu_music.client import FeiNiuClient
 from .conftest import image_bytes
 from .test_client import PROFILE
 
-pytestmark = pytest.mark.enable_socket
+pytestmark = pytest.mark.usefixtures("socket_enabled")
 
 
 async def test_four_distinct_covers_do_not_block_metadata_or_audio(aiohttp_server):

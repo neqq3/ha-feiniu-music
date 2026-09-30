@@ -252,15 +252,18 @@ async def test_card_search_uses_actual_ha_websocket_contract(
     """Card/proxy search works even before HA added global media-source search."""
     manager, outputs = installed
     player = next(iter(manager.entities.values()))
-    client.search.return_value = {"list": [track("showtime", title="Showtime!")], "total": 1}
+
+    async def search(kind, text, page, size):
+        rows = [track("showtime", title="Showtime!")] if kind == "track" else []
+        return {"list": rows, "total": len(rows)}
+
+    client.search.side_effect = search
     ws = await hass_ws_client(hass)
     await ws.send_json(
         {
             "id": 1,
             "type": "media_player/search_media",
             "entity_id": player.entity_id,
-            "media_content_id": f"media-source://{DOMAIN}/{entry.entry_id}/track",
-            "media_content_type": "music",
             "search_query": "showtime",
         }
     )
@@ -269,7 +272,13 @@ async def test_card_search_uses_actual_ha_websocket_contract(
     (result,) = response["result"]["result"]
     assert result["title"] == "Showtime!" and result["can_play"]
     assert result["media_content_id"] == uri(entry, "showtime")
-    client.search.assert_awaited_once_with("track", "showtime", 1, 100)
+    client.search.assert_any_await("track", "showtime", 1, 100)
+    assert {call.args[0] for call in client.search.await_args_list} == {
+        "track",
+        "album",
+        "artist",
+        "playlist",
+    }
     assert not any(output.calls for output in outputs)
 
 

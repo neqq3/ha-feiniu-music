@@ -404,6 +404,7 @@ async def test_short_grant_cache_window_cannot_outlive_token(delivery, runtime, 
     assert (await browser.get(path)).status == 404
 
 
+@pytest.mark.usefixtures("socket_enabled")
 async def test_disconnected_image_request_cancels_unneeded_download(
     runtime, client, aiohttp_server
 ):

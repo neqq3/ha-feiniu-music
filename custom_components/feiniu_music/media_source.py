@@ -4,7 +4,12 @@ from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.http.auth import async_sign_path
-from homeassistant.components.media_player import BrowseError, SearchMedia, SearchMediaQuery
+from homeassistant.components.media_player import (
+    BrowseError,
+    BrowseMedia,
+    SearchMedia,
+    SearchMediaQuery,
+)
 from homeassistant.components.media_player.browse_media import async_process_play_media_url
 from homeassistant.components.media_source import (
     BrowseMediaSource,
@@ -143,7 +148,7 @@ class FeiNiuMediaSource(MediaSource):
             if not text or len(text) > 256:
                 raise ProtocolError("Search text must contain 1 to 256 characters")
             kinds = [parts[0]] if parts and parts[0] in KINDS else KINDS
-            result: list[BrowseMediaSource] = []
+            result: list[BrowseMedia] = []
             for kind in kinds:
                 if (
                     query.media_filter_classes
