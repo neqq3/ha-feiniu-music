@@ -40,6 +40,6 @@ async def async_register_card(hass: HomeAssistant) -> None:
                     )
                 return
         await resources.async_create_item({"url": url, "res_type": "module"})
-    except HomeAssistantError, OSError:
+    except (HomeAssistantError, OSError):
         # The optional card must not prevent media browsing or audio playback.
         _LOGGER.exception("Could not register the FeiNiu Music card resource %s", CARD_URL)

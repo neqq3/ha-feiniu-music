@@ -496,7 +496,7 @@ class PlaybackSession:
         self._prepare_load()
         try:
             await self._await_operation(new_generation, self._load(new_generation))
-        except HomeAssistantError, FeiNiuError, ValueError, TimeoutError:
+        except (HomeAssistantError, FeiNiuError, ValueError, TimeoutError):
             # _await_operation already records the classified failure; do not skip items.
             return
 

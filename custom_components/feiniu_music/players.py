@@ -37,7 +37,7 @@ def migrate_options(hass: HomeAssistant, entry: FeiNiuConfigEntry) -> dict[str, 
             try:
                 binding = OutputBinding.from_entity(hass, old)
                 validate_output(hass, binding, existing=True)
-            except HomeAssistantError, ValueError:
+            except (HomeAssistantError, ValueError):
                 binding = None
             if binding:
                 options[CONF_OUTPUTS] = [binding.snapshot()]

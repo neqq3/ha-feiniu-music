@@ -102,7 +102,7 @@ class QueueStorage:
                 if item.binding.key != key:
                     raise QueueError("Queue output identity mismatch")
                 restored[key] = item
-        except ValueError, TypeError, KeyError:
+        except (ValueError, TypeError, KeyError):
             # Preserve a syntactically readable but semantically corrupt file. A repair
             # action must explicitly clear/restore it; never silently overwrite it.
             self.corrupt = True

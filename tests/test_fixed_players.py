@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from homeassistant.components.media_player import DATA_COMPONENT
 from homeassistant.components.media_player import MediaPlayerEntityFeature as Feature
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -317,7 +318,7 @@ async def test_diagnostics_contains_only_bounded_operational_context(hass, insta
     result = await async_get_config_entry_diagnostics(hass, entry)
     encoded = json.dumps(result)
     assert result["integration_version"] == "1.0.0"
-    assert result["ha_version"].startswith("2026.9.")
+    assert result["ha_version"] == HA_VERSION
     assert len(result["sessions"]) == 2
     assert result["sessions"][0]["session"]["phase"] == "playing"
     for forbidden in (entry.entry_id, "http://", "https://", "authSig", "password", "Title one"):

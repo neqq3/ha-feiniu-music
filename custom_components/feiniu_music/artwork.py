@@ -230,7 +230,7 @@ class ArtworkCache:
                         and digest.hex() == value.etag
                         and 0 <= time() - created < RESOURCE_TTL
                     )
-                except struct.error, ProtocolError:
+                except (struct.error, ProtocolError):
                     valid = False
                 if not valid:
                     self._drop(key)

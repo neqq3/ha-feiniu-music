@@ -1,0 +1,4 @@
+# This plugin pins Home Assistant 2025.12.2; use Python 3.13.
+pytest-homeassistant-custom-component==0.13.300
+ruff==0.16.5
+mypy==2.3.0

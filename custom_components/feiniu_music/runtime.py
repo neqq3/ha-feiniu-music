@@ -205,7 +205,7 @@ class FeiNiuRuntime:
                 require_track(row)
                 # Metadata carries audioSpec beside track, unlike some list responses.
                 row = {**row, "audioSpec": data.get("audioSpec") or row.get("audioSpec") or {}}
-        except NotFoundError, PermissionDeniedError, ProtocolError:
+        except (NotFoundError, PermissionDeniedError, ProtocolError):
             self._cover_owners.pop(key, None)
             # A newly observed refusal supersedes an earlier successful browse.
             for cache_key, (_, row_kind, rows) in list(self._browse_results.items()):

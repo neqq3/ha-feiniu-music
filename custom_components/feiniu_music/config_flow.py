@@ -70,7 +70,7 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_input"
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
-            except NetworkError, RateLimitError:
+            except (NetworkError, RateLimitError):
                 errors["base"] = "cannot_connect"
             except FeiNiuError:
                 errors["base"] = "invalid_response"
@@ -105,7 +105,7 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=self._account_data,
                     options={CONF_OUTPUTS: selected},
                 )
-            except HomeAssistantError, ValueError:
+            except (HomeAssistantError, ValueError):
                 errors["base"] = "invalid_output"
         return self.async_show_form(step_id="outputs", errors=errors, data_schema=output_schema([]))
 
@@ -155,7 +155,7 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="identity_change")
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
-            except NetworkError, RateLimitError:
+            except (NetworkError, RateLimitError):
                 errors["base"] = "cannot_connect"
             except FeiNiuError:
                 errors["base"] = "invalid_response"
@@ -222,7 +222,7 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
             try:
                 selected = select_outputs(self.hass, user_input.get(CONF_OUTPUTS, []), options)
                 return self.async_create_entry(title="", data={**options, CONF_OUTPUTS: selected})
-            except HomeAssistantError, ValueError:
+            except (HomeAssistantError, ValueError):
                 errors["base"] = "invalid_output"
         selected_ids = [
             item.resolve(self.hass) or item.entity_id for item in bindings(options).values()

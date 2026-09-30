@@ -1,4 +1,4 @@
-"""Isolated reproduction against HA 2026.9.4, with no UPnP/network device attached."""
+"""Isolated reproduction against the installed HA, with no UPnP/network device attached."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

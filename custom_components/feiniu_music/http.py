@@ -167,7 +167,7 @@ class FeiNiuAudioView(HomeAssistantView):
             if request.transport:
                 request.transport.close()
             return delivered
-        except aiohttp.ClientError, OSError, TimeoutError:
+        except (aiohttp.ClientError, OSError, TimeoutError):
             if route:
                 route.event("error")
             if delivered is not None:
@@ -296,7 +296,7 @@ async def image_response(
         try:
             expires = jwt.decode(signature, options={"verify_signature": False})["exp"]
             max_age = min(max_age, max(0, int(expires - time())))
-        except jwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError:
+        except (jwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError):
             max_age = 0
     etag = image.etag
     headers = {
