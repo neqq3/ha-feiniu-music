@@ -59,6 +59,13 @@ def play_media(runtime: FeiNiuRuntime, row: dict[str, Any], url: str, mime: str)
         album_art_uri=async_process_play_media_url(runtime.hass, cover) if cover else None,
         resources=[didl_lite.Resource(url, f"http-get:*:{mime}:*")],
     )
+    # DIDL 1.4 omits cover art from MusicTrack's serialization fields. Extend only
+    # this instance so older HA DLNA outputs keep artwork without patching the library.
+    if not any(prop[1] == "albumArtURI" for prop in metadata.didl_properties_defs):
+        metadata.didl_properties_defs = [
+            *metadata.didl_properties_defs,
+            ("upnp", "albumArtURI", "O"),
+        ]
     return FeiNiuPlayMedia(url, mime, didl_metadata=metadata)
 
 

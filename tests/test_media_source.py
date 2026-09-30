@@ -49,9 +49,11 @@ async def test_resolve_returns_only_signed_ha_url_with_fresh_access_check(hass, 
         "track": track(filePath="PRIVATE_PATH"),
         "audioSpec": {"format": "flac"},
     }
+    original_fields = list(didl_lite.MusicTrack.didl_properties_defs)
     result = await FeiNiuMediaSource(hass).async_resolve_media(
         item(hass, f"{runtime.entry.entry_id}/track/track-one")
     )
+    assert didl_lite.MusicTrack.didl_properties_defs == original_fields
     assert result.url.startswith("http://ha-test.invalid:8123/api/feiniu_music/")
     assert "authSig=" in result.url and result.mime_type == "audio/flac"
     assert all(

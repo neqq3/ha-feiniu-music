@@ -106,6 +106,9 @@ async def test_reload_restores_queue_preferences_and_position_without_any_output
     await first.async_set_repeat("all")
     await first.async_set_shuffle(True)
     await first.async_media_seek(4)
+    # The device reports position via HA's event queue, independently of the service return.
+    await hass.async_block_till_done()
+    assert first.control.timeline.position() >= 4
     entity_id, item_id = first.entity_id, first.saved.queue.current_id
     before = list(outputs[0].calls)
     await hass.config_entries.async_reload(entry.entry_id)

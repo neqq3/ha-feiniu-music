@@ -4,6 +4,7 @@ from hashlib import sha256
 from unittest.mock import patch
 
 import pytest
+from homeassistant.components.lovelace import const as lovelace_const
 from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
@@ -11,6 +12,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.feiniu_music.const import DOMAIN
 from custom_components.feiniu_music.frontend import CARD_FILE, CARD_URL, async_register_card
+
+# HA renamed this YAML setting after 2025.12; exercise each installed HA's real schema.
+RESOURCE_MODE_KEY = getattr(lovelace_const, "CONF_RESOURCE_MODE", "mode")
 
 
 def card_resources(hass):
@@ -93,7 +97,7 @@ async def test_multiple_accounts_and_reload_share_one_card(hass, entry, client):
 async def test_yaml_resource_mode_is_not_modified(hass):
     configured = [{"url": "/local/user-owned.js", "type": "module"}]
     assert await async_setup_component(
-        hass, DOMAIN, {"lovelace": {"resource_mode": "yaml", "resources": configured}}
+        hass, DOMAIN, {"lovelace": {RESOURCE_MODE_KEY: "yaml", "resources": configured}}
     )
     assert hass.data[LOVELACE_DATA].resources.async_items() == configured
     assert hass.services.has_service(DOMAIN, "get_lyrics")
@@ -105,7 +109,7 @@ async def test_yaml_dashboard_with_storage_resources_still_registers(hass):
         DOMAIN,
         {
             "lovelace": {
-                "resource_mode": "storage",
+                RESOURCE_MODE_KEY: "storage",
                 "dashboards": {
                     "music-page": {"mode": "yaml", "filename": "music.yaml", "title": "Music"}
                 },
