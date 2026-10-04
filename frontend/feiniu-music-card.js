@@ -681,10 +681,13 @@ export class FeiNiuMusicCard extends Base {
       if(query)result={title:query,children:result.result||[]};
       if(!item&&!query){this._roots=result.children||[];this._renderNav();}
       if(!query)this.$('search').value='';this._browseItem=owner||item;this._browseResult=result;this._browseQuery=query;this._browseLoading=false;
-      const frame={item,query,owner};if(push)this._browseStack.push(frame);else if(this._browseStack.length)this._browseStack[this._browseStack.length-1]=frame;
-      // The artist response contains the actual relation links; do not invent endpoints.
-      if(mediaKind(item)==='artist'&&(result.children||[]).some(x=>x.media_class==='directory')){
-        this._artistContext={item,links:result.children};const tracks=result.children.find(x=>String(x.title).toLowerCase()==='tracks');if(tracks)return await this._browse(tracks,false);
+      const frame={item,query,owner,artistContext:this._artistContext};if(push)this._browseStack.push(frame);else if(this._browseStack.length)this._browseStack[this._browseStack.length-1]=frame;
+      // Only a typed artist entry with its exact backend relation directories is
+      // a detail entry. Relationship pages also contain directories (page links).
+      const artistLinks=!query&&item?.media_class==='artist'&&item.media_content_type==='artist'
+        ?['tracks','albums'].map(kind=>(result.children||[]).find(link=>link.media_class==='directory'&&link.can_expand===true&&link.can_play===false&&link.media_content_type!=='feiniu_page'&&link.media_content_id===`${item.media_content_id}/${kind}`)):[];
+      if(artistLinks.length===2&&artistLinks.every(Boolean)){
+        this._artistContext={item,links:artistLinks};return await this._browse(artistLinks[0],false);
       }
       this._renderNav();this._renderBrowse();this.$('main').scrollTop=0;
       if(!item&&!query){const first=this._roots.find(x=>mediaKind(x)==='album');if(first)await this._browse(first,false);}
@@ -693,7 +696,7 @@ export class FeiNiuMusicCard extends Base {
     }catch(err){if(epoch===this._browseEpoch&&this._connected){this._browseLoading=false;this._browseError=true;this._failedBrowse={item,push,query,owner};this.$('browse-list').replaceChildren(this._empty(this.t('browseFailed')),this._button('retry',()=>this._browse(item,push,query,owner),this.t('retry')));}return false;}
     finally{clearTimeout(hint);if(epoch===this._browseEpoch){this._browseStarted=false;this._browseController=null;}}
   }
-  _back(){this._browseStack.pop();const frame=this._browseStack.at(-1);this._browse(frame?.item||null,false,frame?.query||'',frame?.owner||null);}
+  _back(){this._browseStack.pop();const frame=this._browseStack.at(-1);this._artistContext=frame?.artistContext||null;this._browse(frame?.item||null,false,frame?.query||'',frame?.owner||null);}
   _cover(container,item){
     const url=safeImage(item?.thumbnail);const icon=document.createElement('feiniu-icon');icon.setAttribute('icon',`mdi:${icons[mediaKind(item)]||'music-note'}`);container.append(icon);
     if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.decoding='async';img.src=url;icon.hidden=true;img.onerror=()=>{img.hidden=true;icon.hidden=false;};container.append(img);}

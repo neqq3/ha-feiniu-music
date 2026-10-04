@@ -8,6 +8,7 @@ import {checkLyrics} from './lyrics-check.mjs';
 import {checkCompact} from './compact-check.mjs';
 import {checkCompactLyrics} from './compact-lyrics-check.mjs';
 import {checkBrowse} from './browse-check.mjs';
+import {checkArtistBrowse} from './artist-browse-check.mjs';
 const require = createRequire(import.meta.url);
 const {chromium,webkit} = require('playwright');
 async function showTab(card,name){if(await card.locator('#now-back').isVisible())await card.locator('#now-back button').click();if(name==='正在播放')await card.locator('#mini-open').click();else await card.getByRole('tab',{name,exact:true}).click();}
@@ -63,6 +64,7 @@ let browser;
 try{
  browser=await (process.env.CARD_BROWSER_ENGINE==='webkit'?webkit:chromium).launch({headless:true, ...(process.env.CARD_BROWSER_CHANNEL ? {channel:process.env.CARD_BROWSER_CHANNEL} : {})});
  await checkBrowse(browser,`http://127.0.0.1:${server.address().port}`);
+ await checkArtistBrowse(browser,`http://127.0.0.1:${server.address().port}`);
  if(process.env.CARD_BROWSER_ENGINE!=='webkit'){
  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(e.stack);});page.setDefaultTimeout(5000);page.on('console',m=>console.log('Browser:',m.type(),m.text()));page.on('requestfailed',r=>console.log('Request failed:',r.failure()?.errorText));
  await page.setViewportSize({width:390,height:844});await page.goto(`http://127.0.0.1:${server.address().port}`);

@@ -54,6 +54,31 @@ See [browse performance and cache boundaries](docs/BROWSE_PERFORMANCE.md) for th
 verified run, measured values, call graph, upstream comparison and remaining limits.
 Earlier live-service observations below belong to their dated changes, not this round.
 
+## Artist relationship pagination — 2026-10-04
+
+Review baseline: `ada2e06` on `dev/browse-performance-checks`, initially clean.
+The new `frontend/artist-browse-check.mjs` runs the bundled, real custom element
+against synthetic native-shaped HA replies and asserts its DOM. Before changing
+the card, the 100-track control passed; opening the 201-track artist's first page
+failed with title `歌曲`, hidden/empty relation tabs, no active tab and no artist
+detail artwork. Expected: artist title, Songs/Albums tabs and the artist detail.
+
+The fix recognizes only an explicitly typed artist item with its exact expandable,
+non-playable `tracks` and `albums` directories. Pagination directories and titles
+alone cannot establish context. Navigation frames retain the existing artist
+context so Back can restore a previously visited artist's relationship view.
+
+The same assertions cover second/last/previous song and album pages, albums and
+tracks named `Tracks` / `Albums`, reordered/localized relation names, unrelated
+directories, Back from album contents and another artist, and delayed replies from
+both artist details and relationship contents. Page 2 still sends global position
+100 plus its GUID; Play all still sends the canonical complete-list URI.
+
+The existing Chromium suite and WebKit touch-emulation job both invoke this check.
+The frontend unit tests, build comparison and both HA backend matrix jobs are
+unchanged. This fix changes no backend code, cache, playback state machine or
+queue behavior; no production HA or physical speaker is involved in these tests.
+
 ## Automatic card registration — 0.2.2
 
 - HA 2026.9.4 regression suite: **316 passed**, including eight resource registration tests.
