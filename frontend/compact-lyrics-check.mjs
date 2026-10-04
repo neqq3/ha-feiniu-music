@@ -127,6 +127,13 @@ export async function checkCompactLyrics(sourcePage){
     await page.waitForFunction(()=>document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines').scrollTop>150);
     await plainBox.focus();await page.keyboard.press('End');
     await page.waitForFunction(()=>{const e=document.querySelector('feiniu-music-card').shadowRoot.querySelector('#lyric-lines');return Math.abs(e.scrollHeight-e.clientHeight-e.scrollTop)<2;});
+    // End uses browser smooth scrolling. Observe the completed scroll, rather
+    // than sampling its final one-pixel animation step as a playback regression.
+    await plainBox.evaluate(e=>new Promise(resolve=>{
+      let previous=e.scrollTop,stable=0;
+      const settled=()=>{const value=e.scrollTop;stable=value===previous?stable+1:0;previous=value;if(stable>=4)resolve();else requestAnimationFrame(settled);};
+      requestAnimationFrame(settled);
+    }));
     const scrollPosition=await plainBox.evaluate(e=>e.scrollTop);
     await first.evaluate(c=>{hass.states[c._config.entity].attributes.media_position++;c.hass=hass;c._animate();});
     assert.equal(await plainBox.evaluate(e=>e.scrollTop),scrollPosition,'Progress updates leave manually scrolled plain lyrics in place');

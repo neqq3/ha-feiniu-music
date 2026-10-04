@@ -394,6 +394,7 @@ class FeiNiuRuntime:
         budget: float,
     ) -> BrowsePage:
         started = monotonic()
+        observed: float | None = None
         record: dict[str, Any] = {
             "operation": key[0],
             "kind": kind,
@@ -442,9 +443,18 @@ class FeiNiuRuntime:
         except TimeoutError as err:
             record["error"] = "timeout"
             raise NetworkError("Music browsing timed out; retry") from err
-        except (AuthenticationError, PermissionDeniedError, ProtocolError):
+        except (AuthenticationError, PermissionDeniedError, ProtocolError) as err:
             self._invalidate_metadata()
-            record["error"] = "access_or_protocol"
+            record["error"] = (
+                "authentication"
+                if isinstance(err, AuthenticationError)
+                else "permission"
+                if isinstance(err, PermissionDeniedError)
+                else "protocol"
+            )
+            raise
+        except RateLimitError:
+            record["error"] = "rate_limit"
             raise
         except asyncio.CancelledError:
             record["error"] = "cancelled"
@@ -454,6 +464,8 @@ class FeiNiuRuntime:
             raise
         finally:
             record["total_ms"] = round((monotonic() - started) * 1000, 2)
+            if observed is None:
+                record["queue_ms"] = record["total_ms"]
             if record["error"]:
                 self._browse_count("failed")
             self._browse_recent.append(record)

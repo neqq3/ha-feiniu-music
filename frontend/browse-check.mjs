@@ -36,6 +36,36 @@ export async function checkBrowse(browser,url){
   await card.locator('#browse-list .row').first().waitFor();
   await page.evaluate(()=>{pending.pop().resolve({title:'STALE TEST',children:[]});});
   assert(await card.locator('#browse-list .row').count()>0);
+  // A failed WS call must remain retryable after reconnection, without reattaching.
+  await page.evaluate(()=>{
+   hass.callWS=msg=>msg.type==='media_player/browse_media'?Promise.reject(new Error('test disconnected')):originalWS(msg);
+   return card._browse(card._roots.find(x=>x.title==='Albums'));
+  });
+  await card.locator('#browse-list').getByRole('button',{name:'重试',exact:true}).waitFor();
+  await page.evaluate(()=>{hass.callWS=originalWS;card.hass=hass;});
+  await card.locator('#browse-list').getByRole('button',{name:'重试',exact:true}).click();
+  await card.locator('.tile').first().waitFor();
+  // A pending old-account reply cannot populate the newly configured account.
+  await page.evaluate(()=>{
+   hass.callWS=msg=>msg.type==='media_player/browse_media'&&msg.media_content_id?.endsWith('/track')?new Promise(resolve=>{window.accountReply=resolve;}):originalWS(msg);
+   card._browse(card._roots.find(x=>x.title==='Tracks'));
+   card.setConfig({entity:'media_player.feiniu_b',display_mode:'full'});
+   accountReply({title:'OLD ACCOUNT TEST',children:[]});
+  });
+  await card.locator('.tile').first().waitFor();
+  assert.equal(await page.evaluate(()=>card._config.entity),'media_player.feiniu_b');
+  assert.equal(await card.locator('#browse-heading h1').textContent(),'专辑');
+  // Keep a real image request unresolved while the useful list is already visible.
+  const covers=[];await page.route('**/test-slow-cover',route=>{covers.push(route);});
+  await Promise.all([page.waitForRequest('**/test-slow-cover'),page.evaluate(()=>{
+   hass.callWS=msg=>msg.type==='media_player/browse_media'&&msg.media_content_id?.endsWith('/album')
+    ?Promise.resolve({title:'Albums',children:[{title:'test cover pending',media_class:'album',media_content_type:'album',media_content_id:'test',can_expand:true,thumbnail:location.origin+'/test-slow-cover'}]}):originalWS(msg);
+   return card._browse(card._roots.find(x=>x.title==='Albums'));
+  })]);
+  assert.equal(await card.locator('.tile-title').textContent(),'test cover pending');
+  assert.equal(await card.locator('.tile img').evaluate(img=>img.complete),false);
+  for(const route of covers)await route.fulfill({status:204});
+  await page.unroute('**/test-slow-cover');
   // Backend-supplied page links stay separate from cards/tracks and keep global row numbers.
   await page.evaluate(()=>{
    const base=card._roots.find(x=>x.title==='Tracks').media_content_id;
@@ -74,6 +104,6 @@ export async function checkBrowse(browser,url){
   await page.evaluate(()=>{hass.callWS=originalWS;card._openExpanded();return card._showTab('browse');});
   await card.locator('.tile').first().waitFor();
   assert.deepEqual(errors,[]);
-  console.log('Browse lifecycle passed: delayed/deduped sidebar, stale navigation, timeout/retry, page links/global positions, detach/reattach, touch dialog close/reopen.');
+  console.log('Browse lifecycle passed: slow sidebar/images, stale navigation/account replies, disconnect and timeout/retry, page links/global positions, detach/reattach, touch dialog close/reopen.');
  }finally{await page.close();}
 }

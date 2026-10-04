@@ -18,7 +18,7 @@ class BrowsePage:
 
 def compact_row(row: dict[str, Any]) -> dict[str, Any]:
     """Retain display/playability fields, not paths, tags or recursive library objects."""
-    value = {
+    value: dict[str, Any] = {
         key: row[key]
         for key in ("guid", "title", "name", "coverId", "accessStatus", "isCue", "duration")
         if key in row and isinstance(row[key], str | int | float | bool | type(None))

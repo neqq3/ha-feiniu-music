@@ -121,7 +121,10 @@ async def test_last_waiter_cancel_cleans_flight_and_retry_succeeds(runtime, clie
     assert (await runtime.browse_page("track")).total == 0
 
 
-async def test_different_requests_are_bounded_and_unload_cancels_queued_work(runtime, client):
+@pytest.mark.parametrize("request_count", [20, 40])
+async def test_different_requests_are_bounded_and_unload_cancels_queued_work(
+    runtime, client, request_count
+):
     started = asyncio.Event()
     active = peak = 0
 
@@ -138,14 +141,17 @@ async def test_different_requests_are_bounded_and_unload_cancels_queued_work(run
 
     client.related.side_effect = fetch
     requests = [
-        asyncio.create_task(runtime.browse_page("album", guid=f"test-{i}")) for i in range(20)
+        asyncio.create_task(runtime.browse_page("album", guid=f"test-{i}"))
+        for i in range(request_count)
     ]
     await started.wait()
     await asyncio.sleep(0)
     assert client.related.await_count == peak == 4
+    assert len(runtime._browse_waiters) == min(32, request_count)
     await runtime.close()
     results = await asyncio.gather(*requests, return_exceptions=True)
-    assert all(isinstance(result, asyncio.CancelledError) for result in results)
+    assert all(isinstance(result, asyncio.CancelledError) for result in results[:32])
+    assert all(isinstance(result, NetworkError) for result in results[32:])
     assert not active and not runtime._browse_flights and not runtime._browse_waiters
 
 
@@ -158,6 +164,9 @@ async def test_timeout_includes_waiting_for_admission(runtime, client, monkeypat
             await runtime.browse_page("track")
         client.page.assert_not_called()
         assert not runtime._browse_flights and not runtime._browse_waiters
+        record = runtime.browse_diagnostics()["recent"][-1]
+        assert record["error"] == "timeout" and record["queue_ms"] == record["total_ms"]
+        assert record["upstream_ms"] == 0
     finally:
         for _ in range(4):
             runtime._browse_slots.release()

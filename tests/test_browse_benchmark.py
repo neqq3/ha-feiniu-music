@@ -35,9 +35,12 @@ async def test_first_useful_page_cost(runtime, client, total, delay):
             active -= 1
 
     client.page.side_effect = fetch
+    tracemalloc.start()
     started = perf_counter()
     rows = await runtime.collection("track")
     full_ms = (perf_counter() - started) * 1000
+    _, full_memory_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
     assert len(rows) == total and calls == total // 100
     full_calls = calls
     del rows
@@ -67,6 +70,7 @@ async def test_first_useful_page_cost(runtime, client, total, delay):
         "warm_requests": 0,
         "peak_requests": peak,
         "cache_hits": 1,
+        "full_python_peak_bytes": full_memory_peak,
         "first_page_python_peak_bytes": memory_peak,
         "remaining_flights": 0,
     }
