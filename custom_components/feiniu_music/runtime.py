@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -23,6 +25,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.http import current_request
 
 from .artwork import ArtworkCache, CachedImage, resize_image
+from .browse import BrowsePage, compact_row, page_rows
 from .client import (
     AuthenticationError,
     FeiNiuClient,
@@ -42,10 +45,15 @@ COVER_TTL = 60 * 60
 MAX_COVER_BYTES = 32 * 1024 * 1024
 MAX_COVERS = 512
 BROWSE_TTL = 30
+ACCESS_TTL = 30
+BROWSE_TIMEOUT = 25
+ENUMERATION_TIMEOUT = 90
+MAX_BROWSE_FLIGHTS = 32
 MAX_BROWSE_RESULTS = 16
 MAX_BROWSE_ROWS = 10000
 THUMBNAIL_LIFETIME = 30 * 60
 MAX_THUMBNAIL_PATHS = 2048
+_LOGGER = logging.getLogger(__name__)
 
 
 def normalize_url(value: str) -> str:
@@ -116,8 +124,15 @@ class FeiNiuRuntime:
         self._thumbnail_tasks: dict[tuple[str, int], asyncio.Task[CachedImage]] = {}
         self._thumbnail_waiters: dict[asyncio.Task[CachedImage], int] = {}
         self._image_failures: dict[str, tuple[float, type[Exception]]] = {}
-        self._browse_results: dict[tuple[str, ...], tuple[float, str, list[dict[str, Any]]]] = {}
-        self._browse_lock = asyncio.Lock()
+        self._browse_results: dict[tuple[str, ...], tuple[float, str, BrowsePage]] = {}
+        self._cache_epoch = 0
+        self._browse_slots = asyncio.Semaphore(4)
+        self._browse_flights: dict[tuple[str, ...], asyncio.Task[BrowsePage]] = {}
+        self._browse_waiters: dict[asyncio.Task[BrowsePage], int] = {}
+        self._browse_counts = dict.fromkeys(("hit", "miss", "merged", "failed", "completed"), 0)
+        self._browse_recent: deque[dict[str, Any]] = deque(maxlen=32)
+        self._browse_running = 0
+        self._browse_peak = 0
         self._thumbnail_paths: dict[tuple[str | None, str], tuple[float, str]] = {}
         self._artwork_grants: dict[str, tuple[float, str, str, str]] = {}
         self._active: set[asyncio.Task] = set()
@@ -141,6 +156,7 @@ class FeiNiuRuntime:
 
     async def login(self) -> None:
         """Validate the same music identity configured in this entry."""
+        self._invalidate_metadata()
         user = await self.client.login(
             self.entry.data[CONF_USERNAME],
             self.entry.data[CONF_PASSWORD],
@@ -148,6 +164,7 @@ class FeiNiuRuntime:
         )
         if user.get("guid") != self.entry.data[CONF_ACCOUNT_ID]:
             raise AuthenticationError("Music account identity changed; add a new source")
+        self.check_open()
         self.generation += 1
         self._details.clear()
         self._lyrics.clear()
@@ -183,9 +200,13 @@ class FeiNiuRuntime:
                 self.check_open()
                 return result
             except AuthenticationError:
+                self._invalidate_metadata()
                 if attempt:
                     raise
                 await self.reauthenticate(generation)
+            except PermissionDeniedError:
+                self._invalidate_metadata()
+                raise
         raise AuthenticationError("Music authentication failed")
 
     async def detail(self, kind: str, guid: str, *, fresh: bool = False) -> dict[str, Any]:
@@ -193,11 +214,20 @@ class FeiNiuRuntime:
         self.check_open()
         key = (kind, guid)
         cached = self._details.get(key)
-        if not fresh and cached and monotonic() - cached[0] < 30:
+        if not fresh and cached and monotonic() - cached[0] < ACCESS_TTL:
             return deepcopy(cached[1])
         self._details.pop(key, None)
+        epoch, observed = self._cache_epoch, monotonic()
+
+        async def request() -> dict[str, Any]:
+            nonlocal epoch, observed
+            epoch, observed = self._cache_epoch, monotonic()
+            return await self.client.detail(kind, guid)
+
         try:
-            data = await self.call(lambda: self.client.detail(kind, guid))
+            async with self.activity():
+                data = await self.call(request)
+            self._check_epoch(epoch)
             row = data.get("track") if kind == "track" else data
             if not isinstance(row, dict) or row.get("guid") != guid:
                 raise ProtocolError("Native detail has the wrong identity")
@@ -206,15 +236,11 @@ class FeiNiuRuntime:
                 # Metadata carries audioSpec beside track, unlike some list responses.
                 row = {**row, "audioSpec": data.get("audioSpec") or row.get("audioSpec") or {}}
         except (NotFoundError, PermissionDeniedError, ProtocolError):
-            self._cover_owners.pop(key, None)
-            # A newly observed refusal supersedes an earlier successful browse.
-            for cache_key, (_, row_kind, rows) in list(self._browse_results.items()):
-                if row_kind == kind and any(item["guid"] == guid for item in rows):
-                    self._browse_results.pop(cache_key)
+            self._invalidate_metadata()
             raise
         if len(self._details) >= 128:
             self._details.pop(next(iter(self._details)))
-        self._details[key] = (monotonic(), deepcopy(row))
+        self._details[key] = (observed, deepcopy(row))
         self._remember_owner(kind, row, self._details[key][0])
         return row
 
@@ -228,42 +254,33 @@ class FeiNiuRuntime:
         received = 0
         for page in range(1, 10001):
             data = await self.call(partial(fetch, page))
-            rows, count = data.get("list"), data.get("total")
-            if not isinstance(rows, list) or type(count) is not int or count < 0:
-                raise ProtocolError("Invalid native pagination")
-            if len(rows) > PAGE_SIZE or (total is not None and count != total):
+            rows, count, raw_count = page_rows(data, playlist=playlist)
+            if total is not None and count != total:
                 raise ProtocolError("Native list changed during pagination")
             total = count
             for row in rows:
-                if (
-                    not isinstance(row, dict)
-                    or not isinstance(row.get("guid"), str)
-                    or not row["guid"]
-                ):
-                    raise ProtocolError("Missing native item ID")
                 if not playlist and row["guid"] in seen:
                     raise ProtocolError("Repeated native item ID")
                 seen.add(row["guid"])
-                if not playlist or (
-                    type(row.get("accessStatus")) is int and row["accessStatus"] == 0
-                ):
-                    result.append(row)
-            received += len(rows)
+                result.append(row)
+            received += raw_count
             if received == total:
                 return result
-            if not rows or received > total:
+            if not raw_count or received > total:
                 raise ProtocolError("Native pagination stopped before the reported total")
         raise ProtocolError("Native pagination safety limit exceeded")
 
     async def collection(self, kind: str, *, fresh: bool = False) -> list[dict[str, Any]]:
         """Enumerate the account-filtered native library; never use it as a permission probe."""
 
-        async def read() -> list[dict[str, Any]]:
+        async def read() -> BrowsePage:
             if kind == "playlist":
-                return await self.call(self.client.playlists)
-            return await self.pages(lambda page: self.client.page(kind, page))
+                rows = [compact_row(row) for row in await self.call(self.client.playlists)]
+            else:
+                rows = await self.pages(lambda page: self.client.page(kind, page))
+            return BrowsePage(rows, len(rows))
 
-        return await self._browse(("collection", kind), kind, read, fresh=fresh)
+        return (await self._browse(("collection", kind), kind, read, fresh=fresh)).rows
 
     async def related(
         self, kind: str, guid: str, *, albums: bool = False, fresh: bool = False
@@ -271,58 +288,222 @@ class FeiNiuRuntime:
         """Music 1.0.1 filters album/artist children server-side; only playlist rows carry status."""
         self.check_open()
 
-        async def read() -> list[dict[str, Any]]:
-            return await self.pages(
+        async def read() -> BrowsePage:
+            rows = await self.pages(
                 lambda page: self.client.related(kind, guid, page, albums=albums),
                 playlist=kind == "playlist",
             )
+            return BrowsePage(rows, len(rows))
 
         row_kind = "album" if albums else "track"
-        return await self._browse(("related", kind, guid, row_kind), row_kind, read, fresh=fresh)
+        return (
+            await self._browse(("related", kind, guid, row_kind), row_kind, read, fresh=fresh)
+        ).rows
+
+    async def browse_page(
+        self,
+        kind: str,
+        *,
+        page: int = 1,
+        size: int = PAGE_SIZE,
+        guid: str | None = None,
+        albums: bool = False,
+        fresh: bool = False,
+    ) -> BrowsePage:
+        """Read one native page only. Playlists retain complete occurrence semantics."""
+        if (
+            kind not in {"track", "album", "artist"}
+            or type(page) is not int
+            or not 1 <= page <= 10000
+            or type(size) is not int
+            or not 1 <= size <= PAGE_SIZE
+            or (guid is not None and kind == "track")
+            or (albums and (kind != "artist" or guid is None))
+        ):
+            raise ProtocolError("Invalid browse page")
+        row_kind = ("album" if albums else "track") if guid else kind
+        key = ("page", kind, guid or "", row_kind, str(page), str(size))
+
+        async def read() -> BrowsePage:
+            if guid is None:
+                data = await self.call(lambda: self.client.page(kind, page, size))
+            else:
+                data = await self.call(
+                    lambda: self.client.related(kind, guid, page, size, albums=albums)
+                )
+            rows, total, received = page_rows(data)
+            offset = (page - 1) * size
+            if received != min(size, max(0, total - offset)) or (page > 1 and offset >= total):
+                raise ProtocolError("Native page is incomplete or changed; browse it again")
+            return BrowsePage(rows, total, offset)
+
+        return await self._browse(key, row_kind, read, fresh=fresh, budget=BROWSE_TIMEOUT)
 
     async def _browse(
         self,
         key: tuple[str, ...],
         kind: str,
-        read: Callable[[], Awaitable[list[dict[str, Any]]]],
+        read: Callable[[], Awaitable[BrowsePage]],
         *,
         fresh: bool = False,
-    ) -> list[dict[str, Any]]:
-        """Reuse only complete native results; hits never extend their original lifetime."""
+        budget: float = ENUMERATION_TIMEOUT,
+    ) -> BrowsePage:
+        """Coalesce identical work, with bounded independent work and a total deadline."""
         self.check_open()
+        now = monotonic()
+        for expired, (created, _, _) in list(self._browse_results.items()):
+            if now - created >= BROWSE_TTL:
+                self._browse_results.pop(expired)
         cached = self._browse_results.get(key)
-        if not fresh and cached and monotonic() - cached[0] < BROWSE_TTL:
+        if not fresh and cached:
+            self._browse_count("hit")
             return deepcopy(cached[2])
-        async with self._browse_lock:
-            self.check_open()
-            now = monotonic()
-            for expired, (created, _, _) in list(self._browse_results.items()):
-                if now - created >= BROWSE_TTL:
-                    self._browse_results.pop(expired)
-            if not fresh and (cached := self._browse_results.get(key)):
-                return deepcopy(cached[2])
+        self._browse_count("miss")
+        task = None if fresh else self._browse_flights.get(key)
+        if task is None:
+            if len(self._browse_waiters) >= MAX_BROWSE_FLIGHTS:
+                raise NetworkError("Too many pending music reads; retry shortly")
             self._browse_results.pop(key, None)
-            rows = await read()
-            if len(rows) <= MAX_BROWSE_ROWS:
-                while self._browse_results and (
-                    len(self._browse_results) >= MAX_BROWSE_RESULTS
-                    or sum(len(value[2]) for value in self._browse_results.values()) + len(rows)
-                    > MAX_BROWSE_ROWS
-                ):
-                    self._browse_results.pop(next(iter(self._browse_results)))
-                # Start the TTL before fetching, not after a potentially slow pagination.
-                self._browse_results[key] = (now, kind, deepcopy(rows))
+            task = asyncio.create_task(
+                self._read_browse(key, kind, read, self._cache_epoch, budget),
+                name="FeiNiu browse",
+            )
+            self._browse_flights[key] = task
+        else:
+            self._browse_count("merged")
+        self._browse_waiters[task] = self._browse_waiters.get(task, 0) + 1
+        try:
+            # A cancelled tab/waiter does not cancel the other consumers.
+            return deepcopy(await asyncio.shield(task))
+        finally:
+            self._browse_waiters[task] -= 1
+            if not self._browse_waiters[task]:
+                self._browse_waiters.pop(task)
+                if self._browse_flights.get(key) is task:
+                    self._browse_flights.pop(key)
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def _read_browse(
+        self,
+        key: tuple[str, ...],
+        kind: str,
+        read: Callable[[], Awaitable[BrowsePage]],
+        epoch: int,
+        budget: float,
+    ) -> BrowsePage:
+        started = monotonic()
+        record: dict[str, Any] = {
+            "operation": key[0],
+            "kind": kind,
+            "page": int(key[-2]) if key[0] == "page" else None,
+            "rows": 0,
+            "queue_ms": 0.0,
+            "upstream_ms": 0.0,
+            "assembly_ms": 0.0,
+            "error": None,
+        }
+        try:
+            async with asyncio.timeout(budget), self._browse_slots:
+                self._check_epoch(epoch)
+                observed = monotonic()
+                record["queue_ms"] = round((observed - started) * 1000, 2)
+                self._browse_running += 1
+                self._browse_peak = max(self._browse_peak, self._browse_running)
+                try:
+                    result = await read()
+                finally:
+                    self._browse_running -= 1
+                    record["upstream_ms"] = round((monotonic() - observed) * 1000, 2)
+                self._check_epoch(epoch)
+                # A fresh request supersedes this key without reviving an older result.
+                if self._browse_flights.get(key) is not asyncio.current_task():
+                    raise NetworkError("Music read was superseded; retry")
+                assembled = monotonic()
+                rows = result.rows
+                record["rows"] = len(rows)
+                if len(rows) <= MAX_BROWSE_ROWS:
+                    while self._browse_results and (
+                        len(self._browse_results) >= MAX_BROWSE_RESULTS
+                        or sum(len(value[2].rows) for value in self._browse_results.values())
+                        + len(rows)
+                        > MAX_BROWSE_ROWS
+                    ):
+                        self._browse_results.pop(next(iter(self._browse_results)))
+                    # Display lifetime starts after a successful complete read.
+                    # Permission evidence keeps its conservative request-start age.
+                    self._browse_results[key] = (monotonic(), kind, deepcopy(result))
                 for row in rows:
-                    self._remember_owner(kind, row, now)
-            return rows
+                    self._remember_owner(kind, row, observed)
+                record["assembly_ms"] = round((monotonic() - assembled) * 1000, 2)
+                self._browse_count("completed")
+                return result
+        except TimeoutError as err:
+            record["error"] = "timeout"
+            raise NetworkError("Music browsing timed out; retry") from err
+        except (AuthenticationError, PermissionDeniedError, ProtocolError):
+            self._invalidate_metadata()
+            record["error"] = "access_or_protocol"
+            raise
+        except asyncio.CancelledError:
+            record["error"] = "cancelled"
+            raise
+        except Exception:
+            record["error"] = "unavailable"
+            raise
+        finally:
+            record["total_ms"] = round((monotonic() - started) * 1000, 2)
+            if record["error"]:
+                self._browse_count("failed")
+            self._browse_recent.append(record)
+            # No key, query, GUID, title, raw response or exception text.
+            _LOGGER.debug("Browse client=%s observation=%s", self.client.debug_ref, record)
+
+    def _browse_count(self, name: str) -> None:
+        self._browse_counts[name] = min(1_000_000, self._browse_counts[name] + 1)
+
+    def browse_diagnostics(self) -> dict[str, Any]:
+        """Only bounded in-memory counters; diagnostics never starts library requests."""
+        return {
+            **self._browse_counts,
+            "active": self._browse_running,
+            "peak": self._browse_peak,
+            "flights": len(self._browse_waiters),
+            "cache_entries": len(self._browse_results),
+            "cached_rows": sum(len(value[2].rows) for value in self._browse_results.values()),
+            "recent": deepcopy(list(self._browse_recent)),
+        }
+
+    def _invalidate_metadata(self) -> None:
+        """Invalidate late work as well as values after access/identity changes."""
+        self._cache_epoch += 1
+        self._details.clear()
+        self._lyrics.clear()
+        self._cover_owners.clear()
+        self._browse_results.clear()
+        self._thumbnail_paths.clear()
+        self._browse_flights.clear()
+
+    def _check_epoch(self, epoch: int) -> None:
+        self.check_open()
+        if epoch != self._cache_epoch:
+            raise NetworkError("Music access changed during the read; retry")
 
     async def search(self, kind: str, query: str) -> list[dict[str, Any]]:
         """Read complete account-filtered search results in native order."""
-        return await self._browse(
-            ("search", kind, query),
-            kind,
-            lambda: self.pages(lambda page: self.client.search(kind, query, page, PAGE_SIZE)),
-        )
+
+        async def read() -> BrowsePage:
+            rows = await self.pages(lambda page: self.client.search(kind, query, page, PAGE_SIZE))
+            return BrowsePage(rows, len(rows))
+
+        return (
+            await self._browse(
+                ("search", kind, query),
+                kind,
+                read,
+            )
+        ).rows
 
     def _remember_owner(self, kind: str, row: dict[str, Any], created: float) -> None:
         """Index only completed scoped reads; hits cannot renew access evidence."""
@@ -339,7 +520,7 @@ class FeiNiuRuntime:
         """O(1) lookup of fresh native evidence, separate from image resource lifetime."""
         key = (kind, guid)
         cached = self._cover_owners.get(key)
-        if cached and monotonic() - cached[0] >= BROWSE_TTL:
+        if cached and monotonic() - cached[0] >= ACCESS_TTL:
             self._cover_owners.pop(key)
             cached = None
         owner = cached[1] if cached else None
@@ -360,10 +541,12 @@ class FeiNiuRuntime:
         """Lyrics are optional display data, guarded by the existing detail lifetime."""
         async with self.activity():
             await self.detail("track", guid)
+            epoch = self._cache_epoch
             now = monotonic()
             if (cached := self._lyrics.get(guid)) and now - cached[0] < 300:
                 return deepcopy(cached[1])
             result = parse_lyrics(await self.call(lambda: self.client.lyrics(guid)))
+            self._check_epoch(epoch)
             if len(self._lyrics) >= 32:
                 self._lyrics.pop(next(iter(self._lyrics)))
             self._lyrics[guid] = (now, deepcopy(result))
@@ -371,7 +554,7 @@ class FeiNiuRuntime:
 
     async def cover(self, kind: str, guid: str, cover: str) -> bytes:
         """A currently accessible owner cannot authorize an unrelated cover identifier."""
-        async with self._image_slots:
+        async with self.activity(), self._image_slots:
             await self.authorize_cover(kind, guid, cover)
             return await self._cover_data(cover)
 
@@ -388,11 +571,11 @@ class FeiNiuRuntime:
     def image_max_age(self, kind: str, guid: str) -> int:
         """Do not extend the existing 30-second permission window in a browser."""
         evidence = self._cover_owners.get((kind, guid))
-        return max(0, int(BROWSE_TTL - (monotonic() - evidence[0]))) if evidence else 0
+        return max(0, int(ACCESS_TTL - (monotonic() - evidence[0]))) if evidence else 0
 
     async def thumbnail(self, kind: str, guid: str, cover: str, size: int) -> CachedImage:
         """Share bounded source/resize jobs after every caller's owner check."""
-        async with self._image_slots:
+        async with self.activity(), self._image_slots:
             await self.authorize_cover(kind, guid, cover)
             key = (cover, size)
             if (task := self._thumbnail_tasks.get(key)) is None:
@@ -416,9 +599,11 @@ class FeiNiuRuntime:
                     await asyncio.gather(task, return_exceptions=True)
 
     async def _fetch_thumbnail(self, cover: str, size: int) -> CachedImage:
+        epoch = self._cache_epoch
         cache = self.artwork_cache
         key = cache.key(cover, size)
         if value := await cache.get(key):
+            self._check_epoch(epoch)
             return value
         if (failure := self._image_failures.get(cover)) and monotonic() < failure[0]:
             raise failure[1]("Artwork temporarily unavailable")
@@ -436,9 +621,11 @@ class FeiNiuRuntime:
                         source, created=source.created - max(0, monotonic() - cached[0])
                     )
             value = await cache.executor(resize_image, source, size)
+            self._check_epoch(epoch)
             if new_source:
                 await cache.put(source_key, source)
             await cache.put(key, value)
+            self._check_epoch(epoch)
             return value
         except (NotFoundError, ProtocolError, NetworkError, RateLimitError) as err:
             if isinstance(err, ProtocolError):
@@ -476,7 +663,9 @@ class FeiNiuRuntime:
 
     async def _fetch_cover(self, cover: str) -> bytes:
         """Keep a bounded source-byte cache; entry unload owns these short-lived tasks."""
+        epoch = self._cache_epoch
         data = await self.call(lambda: self.client.cover(cover))
+        self._check_epoch(epoch)
         now = monotonic()
         for key, (created, _) in list(self._covers.items()):
             if now - created >= COVER_TTL:
@@ -548,17 +737,19 @@ class FeiNiuRuntime:
         """Let entry unload cancel active HTTP deliveries and release their responses."""
         self.check_open()
         task = asyncio.current_task()
+        nested = task in self._active
         if task:
             self._active.add(task)
         try:
             yield
         finally:
-            if task:
+            if task and not nested:
                 self._active.discard(task)
 
     async def close(self) -> None:
         """Invalidate cached media and close all streams belonging to this entry."""
         self.closed = True
+        self._invalidate_metadata()
         for route in self.audio_rounds.values():
             route.close()
         self.audio_rounds.clear()
@@ -572,7 +763,12 @@ class FeiNiuRuntime:
         self._thumbnail_paths.clear()
         self._artwork_grants.clear()
         tasks = list(
-            (self._active | set(self._cover_tasks.values()) | set(self._thumbnail_tasks.values()))
+            (
+                self._active
+                | set(self._cover_tasks.values())
+                | set(self._thumbnail_tasks.values())
+                | set(self._browse_waiters)
+            )
             - {asyncio.current_task()}
         )
         for task in tasks:

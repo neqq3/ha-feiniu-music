@@ -246,6 +246,7 @@ const words = {
   },
 };
 Object.assign(words.en, {browse:'Library', lyrics:'Now playing', queue:'Play queue',
+  browseWaiting:'The music server is taking longer to respond. You can switch categories or retry.', browseFailed:'Could not load this list. Check the music server connection and retry.',
   track:'Track', album:'Album', artist:'Artist', playlist:'Playlist', tracks:'Tracks', albums:'Albums', artists:'Artists', playlists:'Playlists',
   library:'Your music', results:'Search results', noResults:'No music found.', browseAll:'Play all',
   trackInfo:'Track details', detailHint:'Play this track to view its lyrics.', lyricLabel:'LYRICS',
@@ -257,6 +258,7 @@ Object.assign(words.en, {browse:'Library', lyrics:'Now playing', queue:'Play que
   compactDetached:'External playback · Play to resume', compactFailed:'Playback failed · Play to retry', compactOffline:'Output offline', compactEmpty:'Choose music', compactWaiting:'Waiting for position', lyricWaiting:'Waiting for playback position',
   repeatOff:'Repeat off', repeatOne:'Repeat one', repeatAll:'Repeat all'});
 Object.assign(words.zh, {browse:'音乐库', lyrics:'正在播放', queue:'播放队列',
+  browseWaiting:'音乐服务器响应较慢，可以切换分类，或稍后重试。', browseFailed:'未能加载此列表，请检查音乐服务器连接后重试。',
   track:'歌曲', album:'专辑', artist:'歌手', playlist:'歌单', tracks:'歌曲', albums:'专辑', artists:'歌手', playlists:'歌单',
   library:'我的音乐', results:'搜索结果', noResults:'没有找到音乐。', browseAll:'播放全部',
   trackInfo:'歌曲详情', detailHint:'播放这首歌后，可在正在播放页查看歌词。', lyricLabel:'歌词',
@@ -311,6 +313,7 @@ export class FeiNiuMusicCard extends Base {
     this._tab = 'browse'; this._offset = 0; this._queue = null; this._queueEpoch = 0; this._lyricEpoch = 0;
     this._connected = false; this._busy = false; this._lyrics = []; this._lyricText = ''; this._lastLine = -1;
     this._roots=[]; this._browseResult=null; this._playlistRows=null; this._browseStack = []; this._browseEpoch = 0; this._queuePending = false; this._queueAgain = false;
+    this._browseLife=0;
     this._volumeOutside=e=>{const path=e.composedPath();if(!path.includes(this.$('volume-control')))this._closeVolume();if(this._queueOpen&&!path.includes(this.$('queue-view'))&&!path.includes(this.$('now-queue')))this._closeQueue();};
     this._fullscreenChanged=()=>this._syncFullscreen();
     this._visibility = () => { if (document.hidden) {this._stopAnimation();this._stopViewTransition();this._clearLyricInteraction();} else { this._refresh(); this._animate(); } };
@@ -323,6 +326,7 @@ export class FeiNiuMusicCard extends Base {
     if(config.compact_mask&&!['soft','glass'].includes(config.compact_mask))throw new Error('compact_mask must be soft or glass');
     if(config.entity!==this._config?.entity){this._lyricResultKey='';this._lyrics=[];this._lyricText='';}
     this._finishExpanded(false);
+    this._cancelBrowse();
     this._queueEpoch++; this._lyricEpoch++; this._lyricPendingKey='';this._browseEpoch++; this._queueAgain=this._queuePending;
     this._stopViewTransition();this._clearLyricInteraction();this._offsetEdit=null;
     this._roots=[]; this._browseResult=null; this._browseItem=null; this._artistContext=null; this._playlistRows=null; this._browseStarted=false; this._browseStack=[]; this._offset=0;
@@ -346,6 +350,7 @@ export class FeiNiuMusicCard extends Base {
     if (this._config) { this._build(); this._render(); }
   }
   disconnectedCallback() {
+    this._cancelBrowse();
     this._connected = false; this._browseStarted=false; this._queueEpoch++; this._lyricEpoch++;this._lyricPendingKey=''; this._browseEpoch++;
     this._finishExpanded(false);
     this._stopAnimation();this._stopViewTransition();this._clearLyricInteraction();this._lyricObserver?.disconnect();document.removeEventListener('fullscreenchange',this._fullscreenChanged); document.removeEventListener('visibilitychange', this._visibility);document.removeEventListener('pointerdown',this._volumeOutside);
@@ -466,6 +471,7 @@ export class FeiNiuMusicCard extends Base {
   }
   _finishExpanded(focus=true){
     if(!this._expanded)return;
+    this._cancelBrowse();
     this._expanded=false;this._expandedResize?.disconnect();this._expandedResize=null;
     this._stopViewTransition();this._clearLyricInteraction();this._closeVolume();this._queueOpen=false;
     const shell=this.shadowRoot.querySelector('.shell');this.$('expanded-dialog').close();this.shadowRoot.insertBefore(shell,this.$('expanded-dialog'));
@@ -511,7 +517,7 @@ export class FeiNiuMusicCard extends Base {
     for(const a of this._viewAnimations)a.cancel();this._viewAnimations=[];
     this._clearLyricInteraction();this._lastLine=-1;this._queueOpen=false;this._closeVolume();this._text('error','');this._tab=key;this._renderContent();this.$('main').scrollTop=0;
     if(expanding)this._render();
-    if(key==='browse'&&load&&!this._browseResult&&!this._browseStarted)this._browse();this._animate();this._queueLyricPaint(true);
+    if(key==='browse'&&load&&!this._browseResult&&!this._browseStarted&&!this._browseError)this._browse();this._animate();this._queueLyricPaint(true);
     if(entering){await this._transitionPlayer(true,start);if(epoch===this._viewEpoch){for(const a of this._viewAnimations)a.cancel();this._viewAnimations=[];}}
   }
   _paintImage(id,value){const img=this.$(id),url=safeImage(value);if(url&&img.getAttribute('src')!==url){img.src=url;img.hidden=false;img.previousElementSibling.hidden=true;}if(!url){img.removeAttribute('src');img.hidden=true;img.previousElementSibling.hidden=false;}}
@@ -568,7 +574,7 @@ export class FeiNiuMusicCard extends Base {
     if(key!==this._key){this._key=key;this._refreshQueue();}
     const lyricKey=`${this._config.entity}/${a.playback_round}/${a.queue_item_id}`;
     if(lyricKey!==this._lyricKey){this._lyricKey=lyricKey;this._refreshLyrics();}
-    if(!this._compactHome&&this._tab==='browse'&&!this._browseResult&&!this._browseStarted)this._browse();
+    if(!this._compactHome&&this._tab==='browse'&&!this._browseResult&&!this._browseStarted&&!this._browseError)this._browse();
     this._syncCompact();this._renderLyricTools();this._animate();
   }
   _position() {if(this._anchor?.value==null)return null;return Math.min(this._attrs.media_duration||Infinity,this._anchor.value+(this._anchor.moving?(performance.now()-this._anchor.at)/1000:0));}
@@ -794,32 +800,61 @@ export class FeiNiuMusicCard extends Base {
     this._syncNavigation();
   }
   async _loadPlaylists(){
-    const item=this._roots.find(x=>mediaKind(x)==='playlist');if(!item||this._playlistRows)return;
-    const entity=this._config.entity;
-    try{const result=await this._call('media_player/browse_media',{media_content_id:item.media_content_id,media_content_type:item.media_content_type});if(this._connected&&entity===this._config.entity){this._playlistRows=result.children||[];this._renderNav();}}
+    const item=this._roots.find(x=>mediaKind(x)==='playlist');if(!item||this._playlistRows||this._playlistPending)return;
+    const life=this._browseLife,controller=new AbortController();this._playlistController=controller;
+    this._playlistPending=true;
+    try{const result=await this._browseRequest('media_player/browse_media',{media_content_id:item.media_content_id,media_content_type:item.media_content_type},controller);if(this._connected&&life===this._browseLife){this._playlistRows=result.children||[];this._renderNav();}}
     catch{/* Optional sidebar shortcuts. Opening Playlists retains the normal error/retry UI. */}
+    finally{if(life===this._browseLife){this._playlistPending=false;this._playlistController=null;}}
   }
-  async _browse(item=null,push=true,query=''){
-    if(!this._hass)return;const epoch=++this._browseEpoch;this._browseStarted=true;this._browseLoading=true;this._browseError=false;
-    this.$('browse-list').replaceChildren(this._empty(this.t('loading')));this.$('browse-all').replaceChildren();
+  _cancelBrowse(){
+    this._browseLife++;this._browseEpoch++;this._browseController?.abort();this._playlistController?.abort();
+    this._playlistPending=false;this._playlistController=null;
+    if(this._browseLoading)this._browseResult=null;
+    this._browseLoading=false;this._browseStarted=false;this._browseError=false;
+  }
+  _browseRequest(type,data,controller){
+    // Standard HA WS has no per-command cancellation. Abort/timeout only releases
+    // this UI waiter; backend coalescing, admission and deadlines bound real work.
+    return new Promise((resolve,reject)=>{
+      const signal=controller.signal;
+      const finish=(callback,value)=>{clearTimeout(timer);signal.removeEventListener('abort',abort);callback(value);};
+      const abort=()=>finish(reject,new Error('browse_cancelled'));
+      const timer=setTimeout(()=>finish(reject,new Error('browse_timeout')),95000);
+      signal.addEventListener('abort',abort,{once:true});
+      this._call(type,data).then(value=>finish(resolve,value),error=>finish(reject,error));
+      if(signal.aborted)abort();
+    });
+  }
+  async _browse(item=null,push=true,query='',owner=null){
+    if(!this._hass||!this._connected)return false;const epoch=++this._browseEpoch,life=this._browseLife;
+    this._browseController?.abort();const controller=new AbortController();this._browseController=controller;
+    this._browseStarted=true;this._browseLoading=true;this._browseError=false;this._browseResult=null;
+    this._browseItem=owner||item;this._browseQuery=query;this._syncNavigation();
+    const heading=this.$('browse-heading');heading.className='page-heading';const title=document.createElement('h1');title.textContent=query||this._label(owner||item)||this.t('browse');heading.replaceChildren(title);
+    this.$('breadcrumbs').replaceChildren();this.$('relations').replaceChildren();this.$('relations').hidden=true;
+    this.$('browse-list').className='';this.$('browse-list').replaceChildren(this._empty(this.t('loading')));this.$('browse-all').replaceChildren();
+    const hint=setTimeout(()=>{if(epoch===this._browseEpoch&&this._browseLoading)this.$('browse-list').replaceChildren(this._empty(this.t('browseWaiting')));},5000);
     try{
       const data=item?{media_content_id:item.media_content_id,media_content_type:item.media_content_type}:{};
-      let result=await this._call(query?'media_player/search_media':'media_player/browse_media',{...data,...(query?{search_query:query}:{})});
-      if(epoch!==this._browseEpoch||!this._connected)return;
+      let result=await this._browseRequest(query?'media_player/search_media':'media_player/browse_media',{...data,...(query?{search_query:query}:{})},controller);
+      if(epoch!==this._browseEpoch||!this._connected)return false;
       if(query)result={title:query,children:result.result||[]};
-      if(!item&&!query){this._roots=result.children||[];this._renderNav();this._loadPlaylists();}
-      if(!query)this.$('search').value='';this._browseItem=item;this._browseResult=result;this._browseQuery=query;this._browseLoading=false;
-      const frame={item,query};if(push)this._browseStack.push(frame);else if(this._browseStack.length)this._browseStack[this._browseStack.length-1]=frame;
+      if(!item&&!query){this._roots=result.children||[];this._renderNav();}
+      if(!query)this.$('search').value='';this._browseItem=owner||item;this._browseResult=result;this._browseQuery=query;this._browseLoading=false;
+      const frame={item,query,owner};if(push)this._browseStack.push(frame);else if(this._browseStack.length)this._browseStack[this._browseStack.length-1]=frame;
       // The artist response contains the actual relation links; do not invent endpoints.
       if(mediaKind(item)==='artist'&&(result.children||[]).some(x=>x.media_class==='directory')){
-        this._artistContext={item,links:result.children};const tracks=result.children.find(x=>String(x.title).toLowerCase()==='tracks');if(tracks){await this._browse(tracks,false);return;}
+        this._artistContext={item,links:result.children};const tracks=result.children.find(x=>String(x.title).toLowerCase()==='tracks');if(tracks)return await this._browse(tracks,false);
       }
       this._renderNav();this._renderBrowse();this.$('main').scrollTop=0;
       if(!item&&!query){const first=this._roots.find(x=>mediaKind(x)==='album');if(first)await this._browse(first,false);}
-    }catch(err){if(epoch===this._browseEpoch){this._browseLoading=false;this._browseError=true;this._failedBrowse={item,push,query};this.$('browse-list').replaceChildren(this._empty(this.t('error')),this._button('retry',()=>this._browse(item,push,query),this.t('retry')));}}
-    finally{if(epoch===this._browseEpoch)this._browseStarted=false;}
+      if(life===this._browseLife&&this._connected&&!this._compactHome)this._loadPlaylists();
+      return true;
+    }catch(err){if(epoch===this._browseEpoch&&this._connected){this._browseLoading=false;this._browseError=true;this._failedBrowse={item,push,query,owner};this.$('browse-list').replaceChildren(this._empty(this.t('browseFailed')),this._button('retry',()=>this._browse(item,push,query,owner),this.t('retry')));}return false;}
+    finally{clearTimeout(hint);if(epoch===this._browseEpoch){this._browseStarted=false;this._browseController=null;}}
   }
-  _back(){this._browseStack.pop();const frame=this._browseStack.at(-1);this._browse(frame?.item||null,false,frame?.query||'');}
+  _back(){this._browseStack.pop();const frame=this._browseStack.at(-1);this._browse(frame?.item||null,false,frame?.query||'',frame?.owner||null);}
   _cover(container,item){
     const url=safeImage(item?.thumbnail);const icon=document.createElement('feiniu-icon');icon.setAttribute('icon',`mdi:${icons[mediaKind(item)]||'music-note'}`);container.append(icon);
     if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.decoding='async';img.src=url;icon.hidden=true;img.onerror=()=>{img.hidden=true;icon.hidden=false;};container.append(img);}
@@ -827,7 +862,7 @@ export class FeiNiuMusicCard extends Base {
   _renderBrowse(){
     if(!this.$('browse-list')||this._browseLoading||this._browseError)return;
     this._text('error','');
-    const result=this._browseResult,item=this._browseItem,query=this._browseQuery,children=result?.children||[];
+    const result=this._browseResult,item=this._browseItem,query=this._browseQuery,links=(result?.children||[]).filter(x=>x.media_content_type==='feiniu_page'),children=(result?.children||[]).filter(x=>x.media_content_type!=='feiniu_page'),paging=result?.feiniu_paging;
     const heading=this.$('browse-heading'),list=this.$('browse-list'),crumb=this.$('breadcrumbs'),relations=this.$('relations');heading.replaceChildren();list.replaceChildren();crumb.replaceChildren();relations.replaceChildren();relations.hidden=true;this.$('browse-all').replaceChildren();
     if(!result){list.append(this._empty(this.t('loading')));return;}
     const root=this._button('browse',()=>{this._browseStack=[];this._browse();},this.t('browse'));crumb.append(root);const current=document.createElement('span');current.textContent=`/  ${query?this.t('results'):this._label(item||result)}`;crumb.append(current);
@@ -836,9 +871,9 @@ export class FeiNiuMusicCard extends Base {
     const owner=artist?.item||item;const detailed=owner&&['album','artist','playlist'].includes(owner.media_class);
     this.shadowRoot.querySelector('.shell').classList.toggle('detail-open',!!item&&['album','artist','playlist'].includes(item.media_class));
     const title=document.createElement('h1');title.textContent=query?query:this._label(owner||result);
-    const count=document.createElement('p');count.className='muted';count.textContent=`${children.length} ${this.t('count')}`;
+    const count=document.createElement('p');count.className='muted';count.textContent=paging&&paging.total?`${paging.offset+1}–${paging.offset+children.length} / ${paging.total} ${this.t('count')}`:`${children.length} ${this.t('count')}`;
     const actions=document.createElement('div');actions.className='hero-actions';
-    if(result.can_play){const play=this._button('play',()=>this._select(result,'replace'),this.t('browseAll'));play.className='pill primary';const add=this._button('add',()=>this._select(result,'add'),this.t('add'));add.className='pill secondary-add';actions.append(play,add);}
+    if(result.can_play||(paging&&children.some(x=>x.can_play&&mediaKind(x)==='track'))){const selection=paging?{...result,media_content_id:paging.context_id}:result;const play=this._button('play',()=>this._select(selection,'replace'),this.t('browseAll'));play.className='pill primary';const add=this._button('add',()=>this._select(selection,'add'),this.t('add'));add.className='pill secondary-add';actions.append(play,add);}
     if(detailed){
       heading.className=`hero ${mediaKind(owner)}`;const art=document.createElement('div');art.className='hero-cover';this._cover(art,owner);const info=document.createElement('div'),label=document.createElement('p');label.className='eyebrow';label.textContent=this.t(mediaKind(owner));info.append(label,title,count,actions);heading.append(art,info);
     }else{heading.className='page-heading';const info=document.createElement('div');info.append(title,count);heading.append(info,actions);}
@@ -851,11 +886,12 @@ export class FeiNiuMusicCard extends Base {
       if(folders){list.append(this._button(mediaKind(child),()=>this._browse(child),this._label(child)));return;}
       if(grid){const tile=document.createElement('div');tile.className=`tile ${mediaKind(child)}`;const open=this._button('browse',()=>this._browse(child));open.className='tile-open';open.setAttribute('aria-label',child.title);open.replaceChildren();const art=document.createElement('span');art.className='tile-art';this._cover(art,child);const name=document.createElement('span');name.className='tile-title';name.textContent=child.title;const sub=document.createElement('small');sub.textContent=this.t(mediaKind(child));open.append(art,name,sub);tile.append(open);list.append(tile);return;}
       const row=document.createElement('div');row.className='row';
-      const number=child.can_play?this._button('play',()=>this._select(child,'replace')):document.createElement('span');number.className='number row-play';number.textContent=String(index+1);if(child.can_play)number.setAttribute('aria-label',`${this.t('play')} · ${child.title}`);row.append(number);
+      const number=child.can_play?this._button('play',()=>this._select(child,'replace')):document.createElement('span');number.className='number row-play';number.textContent=String((paging?.offset||0)+index+1);if(child.can_play)number.setAttribute('aria-label',`${this.t('play')} · ${child.title}`);row.append(number);
       const name=this._button('trackInfo',()=>child.can_expand?this._browse(child):this._openTrack(child));name.className='name';name.setAttribute('aria-label',child.title);name.replaceChildren();const title=document.createElement('span');title.className='row-title';title.textContent=child.title;name.append(title);if(child.artist){const artist=document.createElement('small');artist.textContent=child.artist;name.append(artist);}row.append(name);
       const cover=this._button(mediaKind(child),()=>child.can_expand?this._browse(child):child.can_play?this._select(child,'replace'):this._openTrack(child));cover.className='row-cover';cover.replaceChildren();this._cover(cover,child);cover.title=child.can_expand?child.title:`${this.t(child.can_play?'play':'trackInfo')} · ${child.title}`;cover.setAttribute('aria-label',cover.title);row.insertBefore(cover,name);
       if(child.can_play){const a=document.createElement('div');a.className='actions';a.append(this._button('more',()=>this._openTrack(child),this.t('actions')));row.append(a);}list.append(row);
     });
+    if(links.length){const pager=document.createElement('nav');pager.className='pager';pager.style.gridColumn='1 / -1';for(const link of links){const key=link.title==='Previous page'?'pagePrevious':'pageNext';pager.append(this._button(key,()=>this._browse(link,false,'',item||result),this.t(key)));}list.append(pager);}
   }
   _openTrack(item){
     this._dialogOpener=this.shadowRoot.activeElement;this.$('track-sheet').hidden=false;this._text('track-detail-title',item.title);this._text('track-detail-sub',item.artist||this.t('track'));this.$('track-detail-art').replaceChildren();this._cover(this.$('track-detail-art'),item);

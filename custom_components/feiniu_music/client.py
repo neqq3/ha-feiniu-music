@@ -10,8 +10,11 @@ import re
 import secrets
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from math import ceil, isfinite
 from types import TracebackType
 from typing import Any, Self, cast
 from urllib.parse import quote, urlencode, urlsplit
@@ -22,6 +25,27 @@ import aiohttp
 from .support import private_id, safe_address
 
 _LOGGER = logging.getLogger(__name__)
+MAX_RETRY_AFTER = 120
+
+
+def retry_after(value: str | None) -> int:
+    """Interpret server backoff without unbounded waits or echoing header content."""
+    try:
+        if value is None:
+            return 60
+        try:
+            seconds = float(value)
+        except ValueError:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=UTC)
+            seconds = (date - datetime.now(UTC)).total_seconds()
+        if not isfinite(seconds) or seconds < 0:
+            return 60
+        return max(1, min(MAX_RETRY_AFTER, ceil(seconds)))
+    except (TypeError, ValueError, OverflowError):
+        return 60
+
 
 _LOGIN_LOCKS: WeakValueDictionary[tuple[asyncio.AbstractEventLoop, str], asyncio.Lock] = (
     WeakValueDictionary()
@@ -215,9 +239,13 @@ class FeiNiuClient:
         self._last_request = dict.fromkeys(self._start_locks, 0.0)
         self._session_factory = session_factory
         self._acquire = acquire
+        self._cooldown_until = 0.0
+        self._operations: set[asyncio.Task] = set()
+        self._closing = False
 
     async def __aenter__(self) -> Self:
         """Open an isolated HTTP session."""
+        self._closing = False
         if self._session_factory:
             self._session = self._session_factory()
             return self
@@ -236,12 +264,38 @@ class FeiNiuClient:
         traceback: TracebackType | None,
     ) -> None:
         """Close the session and forget authentication."""
+        self._closing = True
+        tasks = self._operations - {asyncio.current_task()}
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._session:
             await self._session.close()
         self._session = None
         self._token = None
+        self._cooldown_until = 0.0
+
+    @asynccontextmanager
+    async def _operation(self) -> AsyncIterator[None]:
+        """Own finite requests and waits; closing never leaves a queued operation alive."""
+        if self._closing:
+            raise NetworkError("Music client is closed")
+        task = asyncio.current_task()
+        assert task is not None
+        nested = task in self._operations
+        self._operations.add(task)
+        try:
+            yield
+        finally:
+            if not nested:
+                self._operations.discard(task)
 
     async def login(self, username: str, password: str, device_id: str) -> dict[str, Any]:
+        async with self._operation():
+            return await self._login(username, password, device_id)
+
+    async def _login(self, username: str, password: str, device_id: str) -> dict[str, Any]:
         """Authenticate the music account, without reusing a browser cookie."""
         _LOGGER.debug(
             "Login begin client=%s address=%s", self.debug_ref, safe_address(self._origin)
@@ -402,6 +456,11 @@ class FeiNiuClient:
         return data
 
     async def audio_stream(self, identifier: str) -> AsyncGenerator[bytes]:
+        async with self._operation(), aclosing(self._audio_stream(identifier)) as stream:
+            async for chunk in stream:
+                yield chunk
+
+    async def _audio_stream(self, identifier: str) -> AsyncGenerator[bytes]:
         """Stream original audio to a consumer without exposing the native session."""
         if not self._session or not identifier:
             raise ValueError("Client not open or missing track ID")
@@ -419,6 +478,7 @@ class FeiNiuClient:
                 allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=None, connect=5, sock_read=30),
             ) as response:
+                self._rate_limit(response.status, response.headers)
                 prefix = bytearray()
                 while len(prefix) < 4096:
                     chunk = await response.content.read(4096 - len(prefix))
@@ -454,6 +514,13 @@ class FeiNiuClient:
     async def open_audio(
         self, identifier: str, byte_range: str | None = None
     ) -> AsyncIterator[AudioResponse]:
+        async with self._operation(), self._open_audio(identifier, byte_range) as response:
+            yield response
+
+    @asynccontextmanager
+    async def _open_audio(
+        self, identifier: str, byte_range: str | None = None
+    ) -> AsyncIterator[AudioResponse]:
         """Keep one authenticated native response open for HA's HTTP handler."""
         if not self._session or not self._token:
             raise AuthenticationError("No active music session")
@@ -478,6 +545,7 @@ class FeiNiuClient:
             auto_decompress=False,
             timeout=aiohttp.ClientTimeout(total=None, connect=5, sock_read=30),
         ) as response:
+            self._rate_limit(response.status, response.headers)
             if byte_range and response.status == 416:
                 yield AudioResponse(response, b"")
                 return
@@ -699,6 +767,23 @@ class FeiNiuClient:
         self,
         method: str,
         path: str,
+        **kwargs: Any,
+    ) -> tuple[int, Mapping[str, str], bytes]:
+        async with self._operation():
+            result = await self._request_inner(method, path, **kwargs)
+            self._rate_limit(result[0], result[1])
+            return result
+
+    def _rate_limit(self, status: int, headers: Mapping[str, str]) -> None:
+        if status == 429:
+            delay = retry_after(headers.get("Retry-After"))
+            self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
+            raise RateLimitError("Music service rate limit", backoff_time=delay)
+
+    async def _request_inner(
+        self,
+        method: str,
+        path: str,
         *,
         params: Mapping[str, str | int] | None = None,
         body: dict[str, Any] | None = None,
@@ -765,6 +850,11 @@ class FeiNiuClient:
     async def _throttle(self, lane: str = "interactive") -> None:
         """Limit each lane to 20 starts/second, without holding a response lock."""
         async with self._start_locks[lane]:
+            # Per-client backoff coordinates subsequent starts, not response reads.
+            # Cancellation/unload interrupts both this sleep and the lane lock.
+            while (delay := self._cooldown_until - time.monotonic()) > 0:  # noqa: ASYNC110
+                # A deadline wait, not polling: another 429 can extend it while asleep.
+                await asyncio.sleep(delay)
             if self._acquire:
                 await self._acquire()
             else:

@@ -10,12 +10,96 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.feiniu_music.const import DOMAIN
 from custom_components.feiniu_music.media_source import FeiNiuMediaSource
+from custom_components.feiniu_music.selection import Selection
 
 from .conftest import track
 
 
 def item(hass, path):
     return MediaSourceItem(hass, DOMAIN, path, None)
+
+
+async def test_roots_are_lightweight_even_when_optional_sidebar_is_slow(hass, runtime, client):
+    source = FeiNiuMediaSource(hass)
+    roots = await source.async_browse_media(item(hass, runtime.entry.entry_id))
+    assert len(roots.children) == 4
+    for method in (client.page, client.playlists, client.detail, client.cover):
+        method.assert_not_called()
+
+
+async def test_native_pages_global_queue_positions_and_complete_play_all(hass, runtime, client):
+    rows = [track(f"test-{i}") for i in range(102)]
+
+    async def page(kind, number, size=100):
+        return {"list": rows[(number - 1) * size : number * size], "total": len(rows)}
+
+    client.page.side_effect = page
+    selection = Selection(runtime, "media_player.test")
+    context = f"media-source://feiniu_music/{runtime.entry.entry_id}/track"
+    first = await selection.browse(media_content_id=context)
+    assert client.page.await_count == 1
+    assert first.can_play and len(first.children) == 101
+    link = first.children[-1]
+    assert link.media_class == "directory" and not link.can_play
+    second = await selection.browse(media_content_id=link.media_content_id)
+    assert client.page.await_count == 2
+    assert not second.can_play
+    assert second.children[0].media_content_id == f"{context}/queue/100/test-100"
+    assert second.as_dict()["feiniu_paging"]["total"] == 102
+    items, position = await selection.items(second.children[0].media_content_id)
+    assert len(items) == 102 and position == 100 and items[position].track_id == "test-100"
+    items, position = await selection.items(context)
+    assert len(items) == 102 and position == 0
+    items, position = await selection.items(
+        second.children[0].media_content_id, expand_context=False
+    )
+    assert len(items) == 1 and position == 0 and items[0].track_id == "test-100"
+    rows[100], rows[101] = rows[101], rows[100]
+    from homeassistant.exceptions import ServiceValidationError
+
+    with pytest.raises(ServiceValidationError, match="changed"):
+        await selection.items(second.children[0].media_content_id)
+    with pytest.raises(ServiceValidationError):
+        await selection.items(link.media_content_id)
+
+
+@pytest.mark.parametrize(
+    "path", ["album", "artist", "artist/test/tracks", "artist/test/albums", "album/test"]
+)
+async def test_category_and_relation_page_reads_do_not_scan(hass, runtime, client, path):
+    data = {
+        "list": [{"guid": f"test-{i}", "name": "test", "title": "test"} for i in range(100)],
+        "total": 5000,
+    }
+    client.page.return_value = client.related.return_value = data
+    source = FeiNiuMediaSource(hass)
+    result = await source.async_browse_media(item(hass, f"{runtime.entry.entry_id}/{path}"))
+    assert len(result.children) == 101
+    assert client.page.await_count + client.related.await_count == 1
+    assert result.children[-1].media_content_type == "feiniu_page"
+    client.detail.assert_not_called()
+    client.cover.assert_not_called()
+
+
+async def test_shared_raw_page_generates_artwork_per_ha_session(hass, runtime, client):
+    from types import SimpleNamespace
+
+    from homeassistant.components import websocket_api
+
+    assert await async_setup_component(hass, "http", {})
+    client.page.return_value = {"list": [track("test", coverId="test")], "total": 1}
+    source = FeiNiuMediaSource(hass)
+    urls = []
+    for issuer in ("test-1", "test-2", "test-1"):
+        token = websocket_api.current_connection.set(SimpleNamespace(refresh_token_id=issuer))
+        try:
+            page = await source.async_browse_media(item(hass, f"{runtime.entry.entry_id}/track"))
+            urls.append(page.children[0].thumbnail)
+        finally:
+            websocket_api.current_connection.reset(token)
+    assert urls[0] != urls[1] and urls[0] == urls[2]
+    client.page.assert_awaited_once()
+    assert "authSig" not in repr(runtime._browse_results)
 
 
 async def test_artist_has_native_tracks_and_albums_without_library_scan(hass, runtime, client):
@@ -27,7 +111,7 @@ async def test_artist_has_native_tracks_and_albums_without_library_scan(hass, ru
     client.related.return_value = {"list": [{"guid": "song", "title": "Song"}], "total": 1}
     songs = await source.async_browse_media(item(hass, f"{base}/artist/artist-one/tracks"))
     assert songs.children[0].title == "Song" and songs.children[0].can_play
-    client.related.assert_awaited_once_with("artist", "artist-one", 1, albums=False)
+    client.related.assert_awaited_once_with("artist", "artist-one", 1, 100, albums=False)
     client.page.assert_not_called()
     client.detail.assert_awaited_once_with("artist", "artist-one")
 

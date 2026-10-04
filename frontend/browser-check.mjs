@@ -7,8 +7,9 @@ import {CARD_ICONS} from './card-icons.js';
 import {checkLyrics} from './lyrics-check.mjs';
 import {checkCompact} from './compact-check.mjs';
 import {checkCompactLyrics} from './compact-lyrics-check.mjs';
+import {checkBrowse} from './browse-check.mjs';
 const require = createRequire(import.meta.url);
-const {chromium} = require('playwright');
+const {chromium,webkit} = require('playwright');
 async function showTab(card,name){if(await card.locator('#now-back').isVisible())await card.locator('#now-back button').click();if(name==='正在播放')await card.locator('#mini-open').click();else await card.getByRole('tab',{name,exact:true}).click();}
 const card = await readFile(new URL('../custom_components/feiniu_music/www/feiniu-music-card.js',import.meta.url));
 let imageRequests=0;
@@ -60,7 +61,9 @@ const server = createServer((req,res)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let browser;
 try{
- browser=await chromium.launch({headless:true, ...(process.env.CARD_BROWSER_CHANNEL ? {channel:process.env.CARD_BROWSER_CHANNEL} : {})});
+ browser=await (process.env.CARD_BROWSER_ENGINE==='webkit'?webkit:chromium).launch({headless:true, ...(process.env.CARD_BROWSER_CHANNEL ? {channel:process.env.CARD_BROWSER_CHANNEL} : {})});
+ await checkBrowse(browser,`http://127.0.0.1:${server.address().port}`);
+ if(process.env.CARD_BROWSER_ENGINE!=='webkit'){
  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(e.stack);});page.setDefaultTimeout(5000);page.on('console',m=>console.log('Browser:',m.type(),m.text()));page.on('requestfailed',r=>console.log('Request failed:',r.failure()?.errorText));
  await page.setViewportSize({width:390,height:844});await page.goto(`http://127.0.0.1:${server.address().port}`);
  const first=page.locator('feiniu-music-card').first(),second=page.locator('feiniu-music-card').nth(1);
@@ -409,4 +412,5 @@ try{
  await page.screenshot({path:'artifacts/card-preview/ui-icons.png',fullPage:true});
  assert.deepEqual(errors,[]);
  console.log(`Browser checks passed: library/detail/artist tabs/search/back/retry, queue and actions, 2 isolated cards, stable thumbnails, lyrics, dialogs, 360/390/430/1100/1280px, dark/light; ${Object.keys(CARD_ICONS).length} UI icons at 16/24/32px.`);
+ }
 }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}

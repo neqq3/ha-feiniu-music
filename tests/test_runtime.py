@@ -91,8 +91,19 @@ async def test_playlist_filters_raw_pages_and_retains_duplicate_positions(runtim
             "total": 104,
         },
     ]
-    assert await runtime.related("playlist", "parent") == [visible, visible]
+    # Unknown status must be reported, not silently treated as an inaccessible row.
+    with pytest.raises(ProtocolError):
+        await runtime.related("playlist", "parent")
     assert client.related.await_count == 2
+    assert not runtime._browse_results
+    # Retain the original duplicate/order and filtered-empty-page assertions
+    # after retrying with the endpoint's only verified denied status.
+    client.related.side_effect = [
+        {"list": denied, "total": 102},
+        {"list": [visible, visible], "total": 102},
+    ]
+    assert await runtime.related("playlist", "parent") == [visible, visible]
+    assert client.related.await_count == 4
     client.detail.assert_not_called()
     client.page.assert_not_called()
 

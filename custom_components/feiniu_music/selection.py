@@ -46,11 +46,9 @@ class Selection:
             or (len(parts) == 3 and parts[0] == "artist" and parts[2] == "tracks")
         )
         if track_list:
-            result.can_play = bool(result.children)
-            for index, child in enumerate(result.children or []):
-                # Keep the selected ID as well as its position; fail if the list changed.
-                guid = child.media_content_id.rsplit("/", 1)[-1]
-                child.media_content_id = f"{result.media_content_id}/queue/{index}/{guid}"
+            result.can_play = any(child.can_play for child in result.children or [])
+        # The source already attaches the global position + GUID, including page 2.
+        # Page links and page directories themselves are never playable.
         for child in result.children or []:
             if child.media_content_type in {"album", "playlist"}:
                 child.can_play = True

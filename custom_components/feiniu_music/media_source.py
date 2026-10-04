@@ -1,5 +1,6 @@
 """Browse and search native FeiNiu accounts through HA's media source platform."""
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 
@@ -19,8 +20,9 @@ from homeassistant.components.media_source import (
 )
 from homeassistant.core import HomeAssistant
 
+from .browse import BrowsePage
 from .client import FeiNiuError, NotFoundError, ProtocolError
-from .const import DOMAIN, KINDS, NAME
+from .const import DOMAIN, KINDS, NAME, PAGE_SIZE
 from .media import (
     MEDIA_CLASSES,
     FeiNiuPlayMedia,
@@ -30,7 +32,37 @@ from .media import (
     play_media,
     valid_id,
 )
-from .runtime import FeiNiuRuntime
+from .runtime import BROWSE_TIMEOUT, ENUMERATION_TIMEOUT, FeiNiuRuntime
+
+
+class PagedFolder(BrowseMediaSource):
+    """Native next/previous directories plus optional card display information."""
+
+    def __init__(self, identifier: str, title: str, children: list, page: BrowsePage, size: int):
+        super().__init__(
+            domain=DOMAIN,
+            identifier=identifier,
+            title=title,
+            children=children,
+            media_class="directory",
+            media_content_type="music",
+            can_play=False,
+            can_expand=True,
+            can_search=True,
+        )
+        self.page_info = {
+            "offset": page.offset,
+            "size": size,
+            "total": page.total,
+            "context_id": self.media_content_id,
+            "refresh_id": f"{self.media_content_id}/page/{page.offset // size + 1}/{size}/refresh",
+        }
+
+    def as_dict(self, *, parent: bool = True) -> dict[str, Any]:
+        result = super().as_dict(parent=parent)
+        if parent:
+            result["feiniu_paging"] = dict(self.page_info)
+        return result
 
 
 async def async_get_media_source(hass: HomeAssistant) -> MediaSource:
@@ -57,9 +89,18 @@ class FeiNiuMediaSource(MediaSource):
         return runtime, parts[1:]
 
     async def async_browse_media(self, item: MediaSourceItem) -> BrowseMediaSource:
-        """Expose complete lists; account-filtered artist and album rows need no status flag."""
+        """Browse one native page, keeping playlist occurrence lists complete."""
         try:
-            return await self._browse(item.identifier)
+            # Includes admission, native I/O, re-login and assembly. Playlist reads
+            # retain their full-list budget; other first screens need one page.
+            parts = item.identifier.split("/")
+            budget = (
+                ENUMERATION_TIMEOUT if len(parts) > 1 and parts[1] == "playlist" else BROWSE_TIMEOUT
+            )
+            async with asyncio.timeout(budget):
+                return await self._browse(item.identifier)
+        except TimeoutError as err:
+            raise BrowseError("Music browsing timed out; retry") from err
         except FeiNiuError as err:
             raise BrowseError(str(err)) from err
 
@@ -73,6 +114,17 @@ class FeiNiuMediaSource(MediaSource):
             return folder(None, NAME, children)
         runtime, parts = self._runtime(identifier)
         base = runtime.entry.entry_id
+        page, size, fresh = 1, PAGE_SIZE, False
+        if len(parts) >= 5 and parts[-1] == "refresh" and parts[-4] == "page":
+            parts = parts[:-1]
+            fresh = True
+        paged = len(parts) >= 4 and parts[-3] == "page"
+        if paged:
+            if not parts[-2].isdigit() or not parts[-1].isdigit():
+                raise ProtocolError("Invalid browse page")
+            page, size = int(parts[-2]), int(parts[-1])
+            parts = parts[:-3]
+        identifier = "/".join([base, *parts])
         if not parts:
             return folder(
                 base,
@@ -84,9 +136,12 @@ class FeiNiuMediaSource(MediaSource):
         if kind not in KINDS:
             raise NotFoundError("Unknown media category")
         if len(parts) == 1:
-            rows = await runtime.collection(kind)
-            if kind == "track":
-                return self._track_folder(runtime, identifier, rows)
+            if kind != "playlist":
+                data = await runtime.browse_page(kind, page=page, size=size, fresh=fresh)
+                return self._page_folder(runtime, identifier, kind, data, size)
+            if paged:
+                raise NotFoundError("Playlist lists are not paginated")
+            rows = await runtime.collection(kind, fresh=fresh)
             return folder(
                 identifier,
                 kind.title() + "s",
@@ -97,11 +152,13 @@ class FeiNiuMediaSource(MediaSource):
             raise NotFoundError("Unknown media path")
         guid = parts[1]
         if kind == "track":
-            if len(parts) != 2:
+            if len(parts) != 2 or paged:
                 raise NotFoundError("Unknown track path")
             return media_item(runtime, kind, await runtime.detail(kind, guid))
         if kind == "artist":
             if len(parts) == 2:
+                if paged:
+                    raise NotFoundError("Select an artist relationship")
                 artist = await runtime.detail(kind, guid)
                 return folder(
                     identifier,
@@ -115,18 +172,51 @@ class FeiNiuMediaSource(MediaSource):
                 raise NotFoundError("Unknown artist relationship")
             albums = parts[2] == "albums"
             # Music 1.0.1 (0.8.41) filters inaccessible artist children server-side.
-            rows = await runtime.related(kind, guid, albums=albums)
-            if not albums:
-                return self._track_folder(runtime, identifier, rows)
-            return folder(
-                identifier,
-                parts[2].title(),
-                [media_item(runtime, "album" if albums else "track", row) for row in rows],
+            data = await runtime.browse_page(
+                kind,
+                guid=guid,
+                albums=albums,
+                page=page,
+                size=size,
+                fresh=fresh,
+            )
+            return self._page_folder(
+                runtime, identifier, "album" if albums else "track", data, size
             )
         if len(parts) != 2:
             raise NotFoundError("Unknown media relationship")
-        rows = await runtime.related(kind, guid)
+        if kind == "album":
+            data = await runtime.browse_page(kind, guid=guid, page=page, size=size, fresh=fresh)
+            return self._page_folder(runtime, identifier, "track", data, size)
+        if paged:
+            raise NotFoundError("Playlist occurrences are not paginated")
+        rows = await runtime.related(kind, guid, fresh=fresh)
         return self._track_folder(runtime, identifier, rows)
+
+    def _page_folder(
+        self,
+        runtime: FeiNiuRuntime,
+        identifier: str,
+        kind: str,
+        data: BrowsePage,
+        size: int,
+    ) -> PagedFolder:
+        children = [media_item(runtime, kind, row) for row in data.rows]
+        if kind == "track":
+            for index, child in enumerate(children, data.offset):
+                guid = data.rows[index - data.offset]["guid"]
+                child.media_content_id = (
+                    f"media-source://{DOMAIN}/{identifier}/queue/{index}/{guid}"
+                )
+        page = data.offset // size + 1
+        for number, title in ((page - 1, "Previous page"), (page + 1, "Next page")):
+            if number < 1 or (number - 1) * size >= data.total:
+                continue
+            link = folder(f"{identifier}/page/{number}/{size}", title, [])
+            link.media_content_type = "feiniu_page"
+            children.append(link)
+        result = PagedFolder(identifier, kind.title() + "s", children, data, size)
+        return result
 
     def _track_folder(
         self, runtime: FeiNiuRuntime, identifier: str, rows: list[dict[str, Any]]
@@ -141,6 +231,14 @@ class FeiNiuMediaSource(MediaSource):
     async def async_search_media(
         self, item: MediaSourceItem, query: SearchMediaQuery
     ) -> SearchMedia:
+        """Bound the complete multi-kind search, including waiting and pagination."""
+        try:
+            async with asyncio.timeout(ENUMERATION_TIMEOUT):
+                return await self._search_media(item, query)
+        except TimeoutError as err:
+            raise BrowseError("Music search timed out; retry") from err
+
+    async def _search_media(self, item: MediaSourceItem, query: SearchMediaQuery) -> SearchMedia:
         """Search inside one account, across native media types or the selected category."""
         try:
             runtime, parts = self._runtime(item.identifier)

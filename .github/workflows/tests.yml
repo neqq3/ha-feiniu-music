@@ -53,6 +53,13 @@ jobs:
       - name: Test integration
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: python -m pytest tests --timeout=30
+      - name: Synthetic browse measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browse-ha-${{ matrix.ha }}
+          path: artifacts/browse-*.json
+          if-no-files-found: ignore
 
   frontend:
     name: Card build and tests
@@ -69,5 +76,9 @@ jobs:
         run: |
           npm run build
           git diff --exit-code -- custom_components/feiniu_music/www/feiniu-music-card.js
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:browser
+      - name: WebKit browse lifecycle (touch emulation)
+        run: npm run test:browser
+        env:
+          CARD_BROWSER_ENGINE: webkit

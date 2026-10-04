@@ -54,6 +54,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: FeiNiuC
                 "closed": runtime.closed if runtime else None,
                 "client_ref": runtime.client.debug_ref if runtime else None,
                 "generation": runtime.generation if runtime else None,
+                "browse": runtime.browse_diagnostics() if runtime else None,
                 "active_audio_rounds": len(runtime.audio_rounds) if runtime else 0,
                 "active_stream_requests": sum(
                     len(route.tasks) for route in runtime.audio_rounds.values()
