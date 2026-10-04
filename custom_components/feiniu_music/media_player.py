@@ -353,10 +353,12 @@ class FeiNiuPlayer(MediaPlayerEntity):
 
     async def async_set_repeat(self, repeat: str) -> None:
         self.control.queue.set_repeat(repeat)
+        self.control.record("queue", "repeat_changed")
         self._changed()
 
     async def async_set_shuffle(self, shuffle: bool) -> None:
         self.control.queue.set_shuffle(shuffle)
+        self.control.record("queue", "shuffle_changed")
         self._changed()
 
     async def edit_queue(
@@ -367,11 +369,13 @@ class FeiNiuPlayer(MediaPlayerEntity):
             await session.jump(item_id, revision)
         elif action == "move" and item_id is not None:
             session.queue.move(item_id, before_id, revision)
+            session.record("queue", "move")
             self._changed()
         elif action == "remove" and item_id is not None:
             current = item_id == session.queue.current_id
             playing = session.owned and session.started and session.phase == "playing"
             session.queue.remove(item_id, revision)
+            session.record("queue", "remove")
             if current:
                 await session.stop()
                 if playing and session.queue.current:

@@ -48,7 +48,7 @@
 ## 连接飞牛音乐
 
 1. 打开 **设置 → 设备与服务 → 添加集成**，搜索 **FeiNiu Music**。
-2. 填写飞牛音乐地址，例如 `http://NAS地址:端口/music/`，以及音乐账号的用户名和密码。
+2. 建议直接复制浏览器中飞牛音乐页面的完整地址，例如 `http://192.168.1.100:5666/music/`，再填写音乐账号的用户名和密码。**请保留实际端口号**；默认安装通常使用 5666，自定义端口和 HTTPS 反向代理也可以，服务根地址同样支持。
 3. 选择要使用的音箱。以后也可以在集成配置中增删。
 
 配置完成后，每台选中的音箱会对应一个飞牛播放器实体。打开它的“浏览媒体”，即可按歌曲、专辑、歌手或歌单选曲。
@@ -178,7 +178,38 @@ cards:
 - **无法跳转进度**：需要音箱及其 HA 集成支持定位。歌词时间按钮也使用同一能力。
 - **更新后还是旧样式**：更新集成并重启 HA 后，刷新浏览器。资源版本会自动更新；使用 YAML 管理资源时需自行修改 `v` 参数。
 
-升级集成前建议备份 HA。更多操作说明见 [使用说明](EXPERIENCE.md)；遇到问题可以到 [Issues](https://github.com/neqq3/ha-feiniu-music/issues) 反馈，附上 HA 版本、飞牛音乐版本、音箱型号和具体操作步骤。
+升级集成前建议备份 HA。更多操作说明见 [使用说明](EXPERIENCE.md)。
+
+## 故障排查
+
+| 遇到的情况 | 怎么检查 |
+| --- | --- |
+| 无法连接，或提示“音乐服务返回了非预期响应” | 核对飞牛音乐页面的完整地址与实际端口，例如 `http://192.168.1.100:5666/music/`。漏掉端口可能连到另一个网页服务；使用反向代理时也要确认地址正确。HA 主机必须能访问这个地址，仅手机或电脑能打开还不够。 |
+| HA 里有音箱，但输出列表里找不到 | `media_player` 不一定能加载新的媒体。列表按“播放指定媒体”（`PLAY_MEDIA`）能力过滤；只有播放/暂停或音量控制的实体不能作为输出。先确认音箱在线，并查看接入它的集成是否提供这项能力。 |
+| 能选择，但一直加载、没有声音或不能自动切歌 | 在问题发生后先下载下文的 Diagnostics；必要时开启调试日志，再复现一次。可选中只说明声明了最低能力，实际还取决于音箱能否访问 HA 音频地址、格式支持和设备反馈。 |
+| 部分格式不能播放 | 本集成不转码，音频由底层播放器解码，最终格式支持取决于音箱及其 HA 集成。 |
+
+**小爱音箱**：官方 Xiaomi Home 当前对应的部分音箱实体没有提供标准 `PLAY_MEDIA`，因此不能作为输出。已有用户反馈，同一台 **OH2P** 改用第三方 Xiaomi Miot 的 **play_control 实体**后实测可以播放；这是该设备的反馈，不代表所有 Xiaomi Miot 音箱都支持。本集成不依赖 Xiaomi Miot，也不接入小米私有播放 API。
+
+## 如何提交问题
+
+请使用 [问题反馈表单](https://github.com/neqq3/ha-feiniu-music/issues/new?template=bug_report.yml)，填写 **HA Core 版本、FeiNiu Music 集成版本、发生阶段、复现步骤、实际与预期结果**，并附上诊断信息。连接问题请顺便注明 NAS 上飞牛音乐服务的版本；截图可以帮助说明卡片或操作问题。
+
+在 **设置 → 设备与服务 → FeiNiu Music** 中，打开对应账号条目的菜单，选择 **下载诊断信息（Download diagnostics）**。诊断包含输出能力、播放确认、取流计数和最近的有限事件；不包含密码、账号名、歌曲地址或歌词，主机名和实体 ID 会脱敏。匿名标识只用于关联同一次 HA 运行中的诊断与日志，重启后会变化。
+
+需要进一步排查时，在集成菜单选择 **启用调试日志（Enable debug logging）**，复现一次，再**禁用调试日志并下载日志**。HA 已有这套功能，无需额外日志工具。操作位置可参考 [HA 官方说明](https://www.home-assistant.io/docs/configuration/troubleshooting/#debug-logs-and-diagnostics)。
+
+如果首次添加就失败，还没有账号条目，可以先提供错误截图和上述版本信息。需要日志时，按 [HA Logger 文档](https://www.home-assistant.io/integrations/logger/#action-set_level)，在“开发者工具 → 动作”中临时运行：
+
+```yaml
+action: logger.set_level
+data:
+  custom_components.feiniu_music: debug
+```
+
+复现后在 **设置 → 系统 → 日志** 下载日志，再用同一动作将 `debug` 改回 `warning`（或你原来的级别）。不需要为失败的首次添加提供不存在的 Diagnostics。
+
+**上传前请检查并移除密码、token、cookie、Authorization、签名 URL 和账号隐私。** HA 下载的日志还可能包含其他集成的内容，不能假定整个日志文件都已脱敏。诊断和日志都由你手动下载、提交，不会自动上传。
 
 ## 开发与许可
 
@@ -198,6 +229,8 @@ The compact card offers simple, lyrics, and automatic modes. Automatic mode show
 
 Requires **Home Assistant 2025.12.2 or newer**. Connect your speakers to HA first, then add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Add the integration under **Settings → Devices & services**, sign in with a regular FeiNiu Music account, and select your speakers. FN ID and NAS OAuth are not supported.
 
+Copy the full music page URL from your browser, for example `http://192.168.1.100:5666/music/`. **Keep the actual port**; default installations usually use 5666, but custom ports, HTTPS reverse proxies and server root URLs are supported. The integration does not automatically add port 5666.
+
 The card and generated FeiNiu players support search on all supported HA versions. Search in HA's global native media-source browser depends on the HA version.
 
 The bundled card registers and updates automatically. After setting up the integration, refresh your browser and add a **FeiNiu Music** card through the visual editor. Only YAML-managed dashboard resources require the manual resource entry above. **Both compact cards and full music pages must use the FeiNiu player entity created by this integration for the chosen account and speaker—not an arbitrary media player or the underlying speaker entity.** See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.
@@ -205,3 +238,26 @@ The bundled card registers and updates automatically. After setting up the integ
 Startup and track-end behavior can be configured separately for each FeiNiu player in the integration's options, without installing the card. Seeking and audio format support depend on the speaker and its HA integration; this integration does not transcode audio.
 
 The DLNA library bundled with older HA versions, including 2025.12.2, may omit artwork during queue playback, so the speaker's own display may not show the album cover. Artwork and lyrics in the HA card are unaffected.
+
+### Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Connection fails or returns an unexpected response | Check the full music URL and actual port, such as `http://192.168.1.100:5666/music/`. Omitting the port may reach another web service. Verify reverse-proxy routing and connectivity from the HA host, not just your phone or PC. |
+| Speaker exists in HA but is absent from the output list | A `media_player` may only expose play/pause or volume controls. Outputs are filtered for loading specified media (`PLAY_MEDIA`). Check that the speaker is online and its integration provides this capability. |
+| Selectable output stays loading, is silent or fails to advance | Download diagnostics after the problem occurs, then reproduce once with debug logging if needed. Selection only checks declared minimum capabilities; network access to HA audio URLs, format support and device feedback still matter. |
+| Some formats fail | This integration does not transcode. The underlying player decodes the audio; supported formats depend on the speaker and its HA integration. |
+
+Some corresponding speaker entities in official **Xiaomi Home** currently lack standard `PLAY_MEDIA` and cannot be outputs. A user has tested the same **OH2P** successfully through the third-party **Xiaomi Miot play_control entity**. This is a report for that device, not a guarantee for all Xiaomi Miot speakers. This integration has no Xiaomi Miot dependency and does not use Xiaomi private playback APIs.
+
+### Reporting problems
+
+Use the [bug report form](https://github.com/neqq3/ha-feiniu-music/issues/new?template=bug_report.yml) with your **HA Core version, FeiNiu Music integration version, problem stage, reproduction steps, actual and expected results**, and diagnostics. For connection issues, also include the NAS music-service version. Screenshots and debug logs are optional.
+
+Under **Settings → Devices & services → FeiNiu Music**, open the affected account entry menu and select **Download diagnostics**. Diagnostics include output capabilities, playback confirmation, stream counters and bounded recent events. Credentials, account names, song URLs and lyrics are excluded; hosts and entity IDs are redacted. Anonymous references correlate diagnostics and logs only within one HA process and change after restart.
+
+If needed, select **Enable debug logging** from the integration menu, reproduce once, then **disable debug logging and download the log** using [HA's built-in workflow](https://www.home-assistant.io/docs/configuration/troubleshooting/#debug-logs-and-diagnostics). No extra logging tool is needed.
+
+If initial setup fails before an entry exists, diagnostics and that menu may be unavailable. Provide the error screenshot and versions first. When logs are needed, temporarily run the `logger.set_level` action shown above in **Developer tools → Actions**, reproduce, download logs under **Settings → System → Logs**, and restore `warning` or your previous log level. See the [official Logger documentation](https://www.home-assistant.io/integrations/logger/#action-set_level).
+
+**Before uploading, remove passwords, tokens, cookies, Authorization headers, signed URLs and account details.** Downloaded HA logs can include other integrations and are not guaranteed to be fully redacted. Nothing is uploaded automatically.

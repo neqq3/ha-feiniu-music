@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import asdict, dataclass
@@ -16,11 +17,13 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from .client import FeiNiuError
 from .output import OutputAdapter, OutputLeases
 from .queue import QueueItem, QueueModel
+from .support import private_id, safe_state
 from .timeline import Timeline
 
 START_TIMEOUT = 20.0
 COMPAT_PLAY_DELAY = 2.0
 SEEK_TIMEOUT = 5.0
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +85,9 @@ class PlaybackSession:
         self.output = output
         self.leases = leases
         self.resolve = resolve
-        self.changed = changed
+        self._notify = changed
+        self.debug_ref = private_id(str(id(self)))
+        self._last_observation: tuple | None = None
         self.queue = queue if queue is not None else QueueModel()
         self.profile = profile or OutputProfile()
         self.timeline = timeline or Timeline()
@@ -131,6 +136,42 @@ class PlaybackSession:
                 "revision": self.queue.revision,
             }
         )
+        _LOGGER.debug(
+            "Playback session=%s output=%s event=%s reason=%s round=%s generation=%s revision=%s queue_length=%s",
+            self.debug_ref,
+            private_id(self.output.binding.key),
+            event,
+            reason,
+            self.round_id,
+            self.generation,
+            self.queue.revision,
+            len(self.queue.items),
+        )
+
+    def changed(self) -> None:
+        """Log operational changes, not each position/volume update or media identity."""
+        state = self.output.state
+        identity_class = (
+            self.identity if self.identity in {"matched", "foreign", "unknown"} else "unknown"
+        )
+        observation = (
+            safe_state(state.state if state else None),
+            self.phase,
+            self.reason,
+            identity_class,
+            self.confirmation,
+            self.started,
+            self.owned,
+            self.queue.revision,
+        )
+        if observation != self._last_observation:
+            self._last_observation = observation
+            _LOGGER.debug(
+                "Playback observation session=%s state=%s phase=%s reason=%s identity_class=%s confirmation=%s started=%s owned=%s revision=%s",
+                self.debug_ref,
+                *observation,
+            )
+        self._notify()
 
     def _invalidate(self, intent: str) -> int:
         self.generation += 1
@@ -171,6 +212,7 @@ class PlaybackSession:
         self._controlled = False
         self.phase = "detached"
         self.reason = reason
+        self.record("detach", reason)
         self.timeline.freeze(reason, forget=True)
         self.cancel_streams()
         self.leases.release(self.output.binding.key, self)
@@ -237,7 +279,9 @@ class PlaybackSession:
             if self.closed or generation != self.generation:
                 return
             self.queue.check_revision(revision)
+            self.record("selection", "resolved")
             self.queue.enqueue(rows[start:], mode)
+            self.record("queue", mode)
             self.changed()
             return
         self._context = context
@@ -250,7 +294,10 @@ class PlaybackSession:
         async def work() -> None:
             rows, start = await read()
             self._check(generation)
-            if self.queue.enqueue(rows, mode, start):
+            self.record("selection", "resolved")
+            play = self.queue.enqueue(rows, mode, start)
+            self.record("queue", mode)
+            if play:
                 await self._load(generation)
             else:
                 self.phase, self.reason = "idle", "empty_queue"
@@ -291,6 +338,7 @@ class PlaybackSession:
         self.record("command", service)
         await self.output.send(service, data, context=self._context)
         self._check(generation)
+        self.record("command_returned", service)
 
     async def _load(self, generation: int) -> None:
         self._check(generation)
@@ -307,11 +355,13 @@ class PlaybackSession:
         self.identity, self.confirmation = "unknown", "unconfirmed"
         self.phase, self.reason = "loading", "resolving_track"
         self.timeline.reset(self.round_id)
+        self.record("round", "resolve_started")
         self.changed()
         request = await self.resolve(item, self.round_id)
         self._check(generation)
         if self.queue.current_id != item.item_id:
             raise asyncio.CancelledError
+        self.record("round", "resolve_completed")
         self.timeline.reset(self.round_id, request.duration)
         self._expected = request.url
         target = self.output.state
@@ -346,6 +396,7 @@ class PlaybackSession:
             await asyncio.wait_for(self._ready.wait(), START_TIMEOUT)
         except TimeoutError:
             self.reason = "start_unconfirmed"
+            self.record("timeout", "start_unconfirmed")
             raise HomeAssistantError("Output did not confirm this playback round") from None
         self._check(generation)
 
@@ -370,6 +421,7 @@ class PlaybackSession:
         if event not in {"head", "get", "first_byte", "eof", "cancelled", "error"}:
             return
         self.stream_counts[event] = min(1000000, self.stream_counts.get(event, 0) + 1)
+        self.record("stream", event)
         if event == "first_byte":
             self._audio = True
             self.observe(None, self.output.state)
@@ -436,6 +488,7 @@ class PlaybackSession:
                 self.profile.confirmation == "reported" or self._audio or self._raw_samples >= 2
             )
             if confirmed:
+                previously_confirmed = self.started
                 self.started = True
                 self.phase, self.reason = "playing", "output_reported_playing"
                 self.confirmation = (
@@ -446,6 +499,8 @@ class PlaybackSession:
                 self._source = source
                 self.timeline.confirm(self.round_id, estimate_from_start=self._audio)
                 self._ready.set()
+                if not previously_confirmed:
+                    self.record("confirmed", self.confirmation)
             else:
                 self.phase, self.reason = "loading", "reported_without_delivery"
         elif new.state == self.profile.end_state and self.started and was_playing:
@@ -463,6 +518,7 @@ class PlaybackSession:
             ):
                 self._ended_round = self.round_id
                 self.phase, self.reason, self.started = "idle", "natural_end", False
+                self.record("end", "natural_end")
                 generation = self.generation
                 self._advance = self.hass.async_create_background_task(
                     self._auto_advance(generation), "FeiNiu natural queue advance"
@@ -486,8 +542,10 @@ class PlaybackSession:
     async def _auto_advance(self, generation: int) -> None:
         if not self._valid(generation) or self.intent != "play":
             return
+        self.record("advance", "automatic")
         if self.queue.advance(natural=True) is None:
             self.phase, self.reason = "ended", "queue_ended"
+            self.record("end", "queue_ended")
             self.timeline.freeze("queue_ended")
             self.leases.release(self.output.binding.key, self)
             self.changed()
@@ -503,6 +561,7 @@ class PlaybackSession:
     async def next(self, *, previous: bool = False) -> None:
         generation = self._invalidate("play")
         item = self.queue.previous() if previous else self.queue.advance()
+        self.record("queue", "previous" if previous else "next")
         if item is None:
             await self.stop()
             return
@@ -512,6 +571,7 @@ class PlaybackSession:
 
     async def jump(self, item_id: str, revision: int) -> None:
         self.queue.jump(item_id, revision)
+        self.record("queue", "jump")
         generation = self._invalidate("play")
         self._claim()
         self._prepare_load()
@@ -547,6 +607,7 @@ class PlaybackSession:
         self.phase, self.reason = "idle", "stop_requested"
         if clear:
             self.queue.clear()
+            self.record("queue", "clear")
         self.cancel_streams()
         try:
             if self.owned and self._controlled:
@@ -608,6 +669,7 @@ class PlaybackSession:
 
     def diagnostics(self) -> dict[str, Any]:
         return {
+            "ref": self.debug_ref,
             "profile": asdict(self.profile),
             "phase": self.phase,
             "reason": self.reason,
@@ -616,12 +678,19 @@ class PlaybackSession:
             "round": self.round_id,
             "queue_revision": self.queue.revision,
             "queue_length": len(self.queue.items),
+            "queue_position": self.queue.position,
+            "started": self.started,
+            "closed": self.closed,
+            "has_duration": self.timeline.duration is not None,
+            "has_position": self.timeline.position() is not None,
             "owned": self.owned,
-            "identity": self.identity,
+            "identity": self.identity
+            if self.identity in {"matched", "foreign", "unknown"}
+            else "unknown",
             "confirmation": self.confirmation,
             "position_source": self.timeline.source,
             "timeline_reason": self.timeline.reason,
-            "output_state": self.output.state.state if self.output.state else "missing",
+            "output_state": safe_state(self.output.state.state if self.output.state else None),
             "features": int(self.output.features),
             "stream_events": dict(self.stream_counts),
             "events": list(self.history),

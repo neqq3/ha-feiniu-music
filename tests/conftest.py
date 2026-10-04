@@ -36,6 +36,7 @@ def entry():
 @pytest.fixture
 def client():
     result = MagicMock()
+    result.debug_ref = "synthetic-client"
     result.__aenter__ = AsyncMock(return_value=result)
     result.__aexit__ = AsyncMock(return_value=None)
     for name in ("login", "detail", "page", "related", "playlists", "search", "cover", "lyrics"):

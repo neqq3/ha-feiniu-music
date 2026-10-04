@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +14,17 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN
+from .support import private_id, safe_state
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class OutputValidationError(ServiceValidationError):
+    """A controlled translation key, without an entity name or exception payload."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,10 +37,14 @@ class OutputBinding:
     @classmethod
     def from_entity(cls, hass: HomeAssistant, entity_id: str) -> OutputBinding:
         if not entity_id.startswith("media_player."):
-            raise ServiceValidationError("Choose a media player output")
+            _LOGGER.debug(
+                "Output selection ref=%s reason=output_not_media_player", private_id(entity_id)
+            )
+            raise OutputValidationError("output_not_media_player")
         entry = er.async_get(hass).async_get(entity_id)
         if entry and entry.platform == DOMAIN:
-            raise ServiceValidationError("A FeiNiu player cannot be its own output")
+            _LOGGER.debug("Output selection ref=%s reason=output_self", private_id(entity_id))
+            raise OutputValidationError("output_self")
         return cls(f"registry:{entry.id}" if entry else f"entity:{entity_id}", entity_id)
 
     def resolve(self, hass: HomeAssistant) -> str | None:
@@ -55,22 +71,45 @@ class OutputBinding:
 
 
 def validate_output(hass: HomeAssistant, binding: OutputBinding, *, existing: bool = False) -> None:
+    """Report classified validation with privacy-safe context, retaining existing offline bindings."""
+    try:
+        _validate_output(hass, binding, existing=existing)
+    except OutputValidationError as err:
+        _LOGGER.debug(
+            "Output validation existing=%s reason=%s context=%s",
+            existing,
+            err.reason,
+            output_info(hass, binding),
+        )
+        raise
+    _LOGGER.debug(
+        "Output validation existing=%s reason=accepted context=%s",
+        existing,
+        output_info(hass, binding),
+    )
+
+
+def _validate_output(hass: HomeAssistant, binding: OutputBinding, *, existing: bool) -> None:
     """Reject known self/group wrapper cycles, without claiming physical-device deduplication."""
     entity_id = binding.resolve(hass)
     if entity_id is None:
         if existing:
             return
-        raise ServiceValidationError("Output registry entry is missing")
+        raise OutputValidationError("output_missing_registry")
+    if not entity_id.startswith("media_player."):
+        raise OutputValidationError("output_not_media_player")
     visited: set[str] = set()
 
     def walk(candidate: str) -> None:
         if candidate in visited:
-            raise ServiceValidationError("Output contains a wrapper loop")
+            raise OutputValidationError("output_wrapper_loop")
         visited.add(candidate)
         entry = er.async_get(hass).async_get(candidate)
         state = hass.states.get(candidate)
         if (entry and entry.platform == DOMAIN) or (state and state.attributes.get("feiniu_queue")):
-            raise ServiceValidationError("FeiNiu players cannot be used as wrapped outputs")
+            raise OutputValidationError(
+                "output_self" if candidate == entity_id else "output_wrapped_feiniu"
+            )
         # HA groups expose member entity IDs. Unknown third-party wrappers may not.
         children = state.attributes.get("entity_id") if state else None
         if isinstance(children, list):
@@ -81,11 +120,53 @@ def validate_output(hass: HomeAssistant, binding: OutputBinding, *, existing: bo
 
     walk(entity_id)
     state = hass.states.get(entity_id)
-    if existing and (state is None or state.state in {"unavailable", "unknown"}):
-        return
+    if state is None or state.state in {"unavailable", "unknown"}:
+        if existing:
+            return
+        raise OutputValidationError("output_unavailable")
     flags = state.attributes.get("supported_features", 0) if state else 0
     if not isinstance(flags, int) or isinstance(flags, bool) or not flags & Feature.PLAY_MEDIA:
-        raise ServiceValidationError("Output does not advertise PLAY_MEDIA")
+        raise OutputValidationError("output_no_play_media")
+
+
+def output_info(hass: HomeAssistant, binding: OutputBinding) -> dict[str, Any]:
+    """Allowlisted shared context. Actual entity IDs never enter log arguments."""
+    entity_id = binding.resolve(hass)
+    registered = er.async_get(hass).async_get(entity_id) if entity_id else None
+    state = hass.states.get(entity_id) if entity_id else None
+    raw = state.attributes.get("supported_features", 0) if state else 0
+    flags = raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
+    device_class = state.attributes.get("device_class") if state else None
+    return {
+        "binding": "registry" if binding.key.startswith("registry:") else "entity_id",
+        "binding_ref": private_id(binding.key),
+        "saved_entity_ref": private_id(binding.entity_id),
+        "resolved_entity_ref": private_id(entity_id),
+        "resolved": entity_id is not None,
+        "renamed": entity_id is not None and entity_id != binding.entity_id,
+        "registry_exists": registered is not None,
+        "registry_disabled": registered.disabled_by is not None if registered else None,
+        "platform": registered.platform if registered else None,
+        "state": safe_state(state.state if state else None),
+        "available": state is not None and state.state not in {"unavailable", "unknown"},
+        "device_class": device_class
+        if device_class is None
+        or (isinstance(device_class, str) and device_class in {"speaker", "tv", "receiver"})
+        else "other",
+        "supported_features": flags,
+        "features": {
+            feature.name: bool(flags & feature)
+            for feature in (
+                Feature.PLAY_MEDIA,
+                Feature.PLAY,
+                Feature.PAUSE,
+                Feature.STOP,
+                Feature.SEEK,
+                Feature.VOLUME_SET,
+                Feature.VOLUME_MUTE,
+            )
+        },
+    }
 
 
 class OutputLeases:

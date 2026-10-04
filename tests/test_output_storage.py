@@ -12,6 +12,83 @@ from custom_components.feiniu_music.session import OutputProfile
 from custom_components.feiniu_music.storage import QueueStorage, SavedSession
 
 
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("not_media", "output_not_media_player"),
+        ("self", "output_self"),
+        ("state_self", "output_self"),
+        ("missing_registry", "output_missing_registry"),
+        ("offline", "output_unavailable"),
+        ("missing", "output_unavailable"),
+        ("unsupported", "output_no_play_media"),
+        ("bad_flags", "output_no_play_media"),
+        ("loop", "output_wrapper_loop"),
+        ("wrapped", "output_wrapped_feiniu"),
+    ],
+)
+def test_output_validation_classifies_real_backend_failures(hass, case, reason):
+    from custom_components.feiniu_music.const import DOMAIN
+    from custom_components.feiniu_music.output import OutputValidationError
+
+    entity_id = "light.invalid" if case == "not_media" else "media_player.synthetic"
+    registry = er.async_get(hass)
+    if case == "self":
+        entry = registry.async_get_or_create(
+            "media_player", DOMAIN, "test", suggested_object_id="synthetic"
+        )
+        entity_id = entry.entity_id
+    attrs = {"supported_features": Feature.PLAY_MEDIA}
+    if case == "unsupported":
+        attrs["supported_features"] = Feature.PLAY | Feature.PAUSE | Feature.VOLUME_SET
+    if case == "bad_flags":
+        attrs["supported_features"] = True
+    if case == "state_self":
+        attrs["feiniu_queue"] = True
+    if case == "loop":
+        attrs["entity_id"] = [entity_id]
+    if case == "wrapped":
+        attrs["entity_id"] = ["media_player.proxy"]
+        hass.states.async_set("media_player.proxy", "idle", {"feiniu_queue": True})
+    if case != "missing":
+        hass.states.async_set(entity_id, "unavailable" if case == "offline" else "idle", attrs)
+    with pytest.raises(OutputValidationError) as raised:
+        binding = OutputBinding.from_entity(hass, entity_id)
+        if case == "missing_registry":
+            binding = OutputBinding("registry:deleted", entity_id)
+        validate_output(hass, binding)
+    assert raised.value.reason == reason
+    if case in {"offline", "missing", "missing_registry"}:
+        validate_output(hass, binding, existing=True)
+
+
+def test_output_validation_logs_only_anonymous_binding_context(hass, caplog):
+    import logging
+
+    from custom_components.feiniu_music.output import OutputValidationError
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.feiniu_music")
+    hass.states.async_set(
+        "media_player.private_account_mac",
+        "idle",
+        {
+            "supported_features": Feature.PAUSE,
+            "friendly_name": "PRIVATE_PAYLOAD",
+            "xiaoai_id": "PRIVATE_PAYLOAD",
+            "source": "PRIVATE_PAYLOAD",
+        },
+    )
+    with pytest.raises(OutputValidationError):
+        validate_output(hass, OutputBinding.from_entity(hass, "media_player.private_account_mac"))
+    assert "output_no_play_media" in caplog.text
+    own = " ".join(
+        r.getMessage()
+        for r in caplog.records
+        if r.name.startswith("custom_components.feiniu_music")
+    )
+    assert "private_account_mac" not in own and "PRIVATE_PAYLOAD" not in own
+
+
 async def test_registry_uuid_tracks_rename_and_offline_without_changing_binding(hass):
     registry = er.async_get(hass)
     entry = registry.async_get_or_create(

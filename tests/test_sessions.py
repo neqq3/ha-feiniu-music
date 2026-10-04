@@ -17,6 +17,58 @@ from custom_components.feiniu_music.session import OutputProfile, PlaybackReques
 from .test_media_player import TestOutput
 
 
+async def test_playback_debug_reconstructs_delivery_without_sensitive_metadata(
+    hass, sessions, caplog
+):
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.feiniu_music")
+    session, output = await sessions(profile=OutputProfile())
+    task = asyncio.create_task(session.start())
+    await hass.async_block_till_done()
+    for event in ("head", "get", "first_byte", "eof"):
+        session.stream_event(session.round_id, event)
+    await task
+    messages = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name.startswith("custom_components.feiniu_music")
+    ]
+    assert any("event=command " in m for m in messages)
+    assert any("event=command_returned " in m for m in messages)
+    assert any("event=confirmed " in m for m in messages)
+    assert session.diagnostics()["stream_events"] == {
+        "head": 1,
+        "get": 1,
+        "first_byte": 1,
+        "eof": 1,
+    }
+    assert all(
+        "authSig" not in m and "http://" not in m and output.entity_id not in m for m in messages
+    )
+    # A repeated device snapshot adds neither a log entry nor an invented transition.
+    caplog.clear()
+    for _ in range(10):
+        session.observe(None, session.output.state)
+    assert not [r for r in caplog.records if r.name.startswith("custom_components.feiniu_music")]
+
+
+async def test_debug_failure_keeps_category_not_service_payload(sessions, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.feiniu_music")
+    session, _ = await sessions()
+    session.output.send = AsyncMock(
+        side_effect=HomeAssistantError("PRIVATE_URL?authSig=PRIVATE_TOKEN")
+    )
+    with pytest.raises(HomeAssistantError):
+        await session.start()
+    records = [r for r in caplog.records if r.name.startswith("custom_components.feiniu_music")]
+    assert any("event=failure reason=HomeAssistantError" in r.getMessage() for r in records)
+    assert "PRIVATE_" not in str([(r.msg, r.args, r.exc_info) for r in records])
+    assert "PRIVATE_" not in str(session.diagnostics())
+
+
 @pytest.fixture
 async def sessions(hass):
     assert await async_setup_component(hass, "media_player", {})
@@ -278,10 +330,10 @@ async def test_unload_cancels_pending_start_and_stops_entity_notifications(sessi
     loading = asyncio.create_task(session.start())
     await entered.wait()
     await session.close()
-    count = session.changed.call_count
+    count = session._notify.call_count
     await loading
     session.observe(None, State(output.entity_id, "playing", {}))
-    assert session.changed.call_count == count and not output.calls
+    assert session._notify.call_count == count and not output.calls
 
 
 async def test_empty_queue_only_enqueue_does_not_claim_or_start_output(sessions):

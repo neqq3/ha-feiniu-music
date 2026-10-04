@@ -1,0 +1,72 @@
+name: 问题反馈 / Bug report
+description: 报告连接、输出、播放或卡片问题 / Report connection, output, playback or card problems
+body:
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 发生阶段 / Stage
+      options:
+        - 添加集成 / Adding the integration
+        - 登录或连接飞牛音乐 / Login or connection
+        - 选择输出 / Selecting an output
+        - 浏览歌曲、专辑或歌单 / Browsing the library
+        - 点击播放 / Starting playback
+        - 播放中或切歌 / Playback or track changes
+        - 卡片或界面 / Card or UI
+        - 其他 / Other
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: HA Core 版本 / Version
+      placeholder: "2025.12.2"
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: FeiNiu Music 集成版本 / Integration version
+      description: 请填写集成版本；连接问题也请补充 NAS 音乐服务版本。 / Include the integration version; for connection issues also add the NAS music-service version.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 从哪里开始、做了什么、何时发生；输出问题可注明音箱型号及接入集成。 / Where you started, what you did and when it failed; include the speaker model and its HA integration for output issues.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果 / Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果 / Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息 / Diagnostics
+      description: 在设置 → 设备与服务 → FeiNiu Music 的对应账号菜单下载诊断，然后将文件拖入这里。首次添加失败、尚无条目时请注明无法获取。 / Download diagnostics from the affected entry menu under Settings → Devices & services → FeiNiu Music, then attach the file here. If initial setup failed before an entry existed, say diagnostics are unavailable.
+  - type: textarea
+    id: debug_log
+    attributes:
+      label: 调试日志（可选） / Debug log (optional)
+      description: 仅在可复现且诊断信息不足时提供。使用 HA 集成菜单启用调试日志 → 复现 → 禁用并下载；首次添加失败的日志方法见 README。 / When diagnostics are insufficient, enable debug logging in HA, reproduce once, then disable and download it. See README for initial-setup failures.
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选） / Screenshots (optional)
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 上传前检查 / Privacy check
+      options:
+        - label: 我已检查并移除密码、token、cookie、Authorization、签名 URL 和账号隐私。 / I have checked and removed passwords, tokens, cookies, Authorization headers, signed URLs and account details.
+          required: true

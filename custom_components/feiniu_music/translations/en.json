@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect FeiNiu Music",
-        "description": "Connect the official music service using a regular music account. No NAS administrator account is needed. Use the server root or /music/ URL.",
+        "description": "Use a regular music account; no NAS administrator account is needed. Copy the full FeiNiu Music page address from your browser, for example http://192.168.1.100:5666/music/ . Keep the actual port: a default installation usually uses 5666. Custom ports, HTTPS reverse proxies and server root URLs are also supported.",
         "data": {
           "url": "Music service URL",
           "username": "Music username",
@@ -27,7 +27,7 @@
       },
       "outputs": {
         "title": "Select queue outputs",
-        "description": "Create an independent FeiNiu queue for each selected output. Outputs must play HTTP audio from HA; advertised features do not guarantee all formats. Different protocol entities for the same speaker may conflict. Leave empty to use only the media source.",
+        "description": "Create a FeiNiu player for each speaker already connected to HA. The list filters for loading specified media (PLAY_MEDIA); play/pause or volume control alone is insufficient. Outputs must also reach HA audio URLs and decode the format; appearing here does not guarantee playback. Saved offline bindings can be retained. Different protocol entities for one speaker may conflict. Leave empty to use only the media source.",
         "data": {
           "outputs": "Output players"
         }
@@ -38,7 +38,14 @@
       "cannot_connect": "Could not connect to the music service.",
       "invalid_input": "Enter a valid music URL, username and password.",
       "invalid_response": "The music service returned an unexpected response.",
-      "invalid_output": "Output cannot play media or contains a wrapper loop."
+      "invalid_output": "This output could not be validated. Download diagnostics and, if needed, reproduce with debug logging before reporting the problem.",
+      "output_not_media_player": "Choose a Home Assistant media player entity.",
+      "output_self": "A FeiNiu player cannot be its own output. Choose the underlying speaker player.",
+      "output_missing_registry": "The output's entity registry entry is missing. Check the speaker entity in HA and select it again.",
+      "output_unavailable": "This output is currently offline or unavailable. Restore its connection in HA before adding it.",
+      "output_no_play_media": "This HA player cannot load new specified media and cannot be a FeiNiu output. Play/pause or volume control alone is insufficient: its integration must provide the ability to play specified media (PLAY_MEDIA).",
+      "output_wrapper_loop": "This group's or proxy's player references form a loop. Correct those references before selecting it.",
+      "output_wrapped_feiniu": "This group or proxy contains a FeiNiu player, creating circular control. Choose the underlying speaker player."
     },
     "abort": {
       "already_configured": "This server and music account are already configured.",
@@ -51,7 +58,7 @@
     "step": {
       "outputs": {
         "title": "Select queue outputs",
-        "description": "Create an independent FeiNiu queue for each selected output. Outputs must play HTTP audio from HA; advertised features do not guarantee all formats. Different protocol entities for the same speaker may conflict. Leave empty to use only the media source.",
+        "description": "Create a FeiNiu player for each speaker already connected to HA. The list filters for loading specified media (PLAY_MEDIA); play/pause or volume control alone is insufficient. Outputs must also reach HA audio URLs and decode the format; appearing here does not guarantee playback. Saved offline bindings can be retained. Different protocol entities for one speaker may conflict. Leave empty to use only the media source.",
         "data": {
           "outputs": "Output players"
         }
@@ -88,8 +95,15 @@
       }
     },
     "error": {
-      "invalid_output": "Output cannot play media or contains a wrapper loop.",
-      "invalid_profile": "Invalid playback preferences. Check the values and try again."
+      "invalid_output": "This output could not be validated. Download diagnostics and, if needed, reproduce with debug logging before reporting the problem.",
+      "invalid_profile": "Invalid playback preferences. Check the values and try again.",
+      "output_not_media_player": "Choose a Home Assistant media player entity.",
+      "output_self": "A FeiNiu player cannot be its own output. Choose the underlying speaker player.",
+      "output_missing_registry": "The output's entity registry entry is missing. Check the speaker entity in HA and select it again.",
+      "output_unavailable": "This output is currently offline or unavailable. Restore its connection in HA before adding it.",
+      "output_no_play_media": "This HA player cannot load new specified media and cannot be a FeiNiu output. Play/pause or volume control alone is insufficient: its integration must provide the ability to play specified media (PLAY_MEDIA).",
+      "output_wrapper_loop": "This group's or proxy's player references form a loop. Correct those references before selecting it.",
+      "output_wrapped_feiniu": "This group or proxy contains a FeiNiu player, creating circular control. Choose the underlying speaker player."
     },
     "abort": {
       "not_loaded": "Load the FeiNiu Music integration before configuring playback.",

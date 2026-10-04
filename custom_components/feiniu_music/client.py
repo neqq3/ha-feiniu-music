@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import secrets
 import time
@@ -17,6 +18,10 @@ from urllib.parse import quote, urlencode, urlsplit
 from weakref import WeakValueDictionary
 
 import aiohttp
+
+from .support import private_id, safe_address
+
+_LOGGER = logging.getLogger(__name__)
 
 _LOGIN_LOCKS: WeakValueDictionary[tuple[asyncio.AbstractEventLoop, str], asyncio.Lock] = (
     WeakValueDictionary()
@@ -198,6 +203,7 @@ class FeiNiuClient:
         if profile.prefix != "/music/api/v1":
             raise ValueError("Only the inspected v1 profile is supported")
         self._origin = f"{parsed.scheme}://{parsed.netloc}"
+        self.debug_ref = private_id(str(id(self)))
         self._profile = profile
         self._timeout = timeout
         self._session: aiohttp.ClientSession | None = None
@@ -237,6 +243,9 @@ class FeiNiuClient:
 
     async def login(self, username: str, password: str, device_id: str) -> dict[str, Any]:
         """Authenticate the music account, without reusing a browser cookie."""
+        _LOGGER.debug(
+            "Login begin client=%s address=%s", self.debug_ref, safe_address(self._origin)
+        )
         if not username or not password or not re.fullmatch(r"[a-fA-F0-9]{32}", device_id):
             raise ValueError("Missing credentials or invalid device ID")
         # Music 1.0.1 can reject overlapping password logins with code 120001.
@@ -259,10 +268,13 @@ class FeiNiuClient:
                 or not isinstance(data.get("userToken"), str)
                 or not data["userToken"]
             ):
+                _LOGGER.debug("Login rejected client=%s stage=credentials_shape", self.debug_ref)
                 raise ProtocolError("Login response lacks a token")
             if not isinstance(data.get("user"), dict):
+                _LOGGER.debug("Login rejected client=%s stage=user_shape", self.debug_ref)
                 raise ProtocolError("Login response lacks a user")
             self._token = data["userToken"]
+            _LOGGER.debug("Login complete client=%s", self.debug_ref)
             return cast("dict[str, Any]", data["user"])
 
     async def current_user(self) -> dict[str, Any]:
@@ -588,8 +600,59 @@ class FeiNiuClient:
         params: Mapping[str, str | int] | None = None,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Fixed route names only. Never log query, body, headers or exception messages.
+        route = (
+            path
+            if path
+            in {
+                "/user/password-login",
+                "/user/me",
+                "/sys/config",
+                "/lyric/list",
+                "/track/list",
+                "/album/list",
+                "/artist/list",
+                "/playlist/list",
+                "/track/metadata",
+                "/album/detail",
+                "/artist/detail",
+                "/playlist/detail",
+                "/search/track",
+                "/search/album",
+                "/search/artist",
+                "/search/playlist",
+                "/track/album-detail/list",
+                "/track/artist-detail/list",
+                "/track/playlist-detail/list",
+                "/album/artist-detail/list",
+            }
+            else "other"
+        )
+        try:
+            return await self._json_response(method, path, params=params, body=body)
+        except (FeiNiuError, ValueError) as err:
+            _LOGGER.debug(
+                "API failed client=%s route=%s category=%s",
+                self.debug_ref,
+                route,
+                type(err).__name__,
+            )
+            raise
+
+    async def _json_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, str | int] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         request_token = self._token
         status, _, data = await self._request(method, path, params=params, body=body)
+        if status != 200:
+            _LOGGER.debug(
+                "API response client=%s stage=http_status status=%s", self.debug_ref, status
+            )
         if status == 401:
             if self._token == request_token:
                 self._token = None
@@ -607,10 +670,14 @@ class FeiNiuClient:
         try:
             result = json.loads(data)
         except (ValueError, UnicodeDecodeError) as err:
+            _LOGGER.debug("API response client=%s stage=json_decode", self.debug_ref)
             raise ProtocolError("Response is not JSON") from err
         if not isinstance(result, dict) or type(result.get("code")) is not int:
+            _LOGGER.debug("API response client=%s stage=envelope", self.debug_ref)
             raise ProtocolError("Invalid response envelope")
         code = result["code"]
+        if code not in {0, 200}:
+            _LOGGER.debug("API response client=%s stage=business_code", self.debug_ref)
         if code in {120001, 120002}:
             # An older in-flight failure must not erase a newly installed session.
             if self._token == request_token:
@@ -621,8 +688,10 @@ class FeiNiuClient:
         if code not in {0, 200}:
             raise ProtocolError(f"API code {code}")
         if "data" not in result:
+            _LOGGER.debug("API response client=%s stage=data_missing", self.debug_ref)
             raise ProtocolError("Response lacks data")
         if not isinstance(result["data"], dict):
+            _LOGGER.debug("API response client=%s stage=data_shape", self.debug_ref)
             raise ProtocolError("Expected a response data object")
         return cast("dict[str, Any]", result["data"])
 

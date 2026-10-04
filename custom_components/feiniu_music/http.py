@@ -1,6 +1,7 @@
 """Authenticated HA endpoints for original audio and owner-bound artwork."""
 
 import asyncio
+import logging
 import re
 from time import time
 
@@ -24,6 +25,9 @@ from .const import DOMAIN, KINDS
 from .media import mime_type, valid_id
 from .runtime import FeiNiuRuntime
 from .streaming import AudioRound
+from .support import private_id
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def runtime_for(hass: HomeAssistant, entry_id: str, scope: str) -> FeiNiuRuntime:
@@ -159,6 +163,13 @@ class FeiNiuAudioView(HomeAssistantView):
                             raise
                         await runtime.reauthenticate(generation)
         except FeiNiuError as err:
+            _LOGGER.debug(
+                "Audio request failed client=%s output=%s round=%s category=%s",
+                runtime.client.debug_ref,
+                private_id(route.owner) if route else None,
+                route.round_id if route else None,
+                type(err).__name__,
+            )
             if route:
                 route.event("error")
             if delivered is None:
@@ -167,7 +178,14 @@ class FeiNiuAudioView(HomeAssistantView):
             if request.transport:
                 request.transport.close()
             return delivered
-        except (aiohttp.ClientError, OSError, TimeoutError):
+        except (aiohttp.ClientError, OSError, TimeoutError) as err:
+            _LOGGER.debug(
+                "Audio request failed client=%s output=%s round=%s category=%s",
+                runtime.client.debug_ref,
+                private_id(route.owner) if route else None,
+                route.round_id if route else None,
+                type(err).__name__,
+            )
             if route:
                 route.event("error")
             if delivered is not None:
@@ -177,6 +195,11 @@ class FeiNiuAudioView(HomeAssistantView):
                 return delivered
             raise web.HTTPServiceUnavailable(text="Music stream connection failed") from None
         except asyncio.CancelledError:
+            _LOGGER.debug(
+                "Audio request cancelled output=%s round=%s",
+                private_id(route.owner) if route else None,
+                route.round_id if route else None,
+            )
             if route:
                 route.event("cancelled")
             if delivered is not None:

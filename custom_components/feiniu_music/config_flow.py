@@ -1,5 +1,6 @@
 """Configure a regular music account, without NAS administrator access."""
 
+import logging
 from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
@@ -27,9 +28,12 @@ from homeassistant.helpers.selector import (
 from .api import create_client
 from .client import AuthenticationError, FeiNiuError, NetworkError, RateLimitError
 from .const import CONF_ACCOUNT_ID, CONF_DEVICE_ID, DOMAIN
-from .output import OutputBinding, validate_output
+from .output import OutputBinding, OutputValidationError, validate_output
 from .players import CONF_OUTPUTS, AccountPlayers, bindings
 from .runtime import normalize_url
+from .support import safe_address
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -48,6 +52,7 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 url = normalize_url(user_input[CONF_URL])
+                _LOGGER.debug("Config login begin address=%s", safe_address(url))
                 username = user_input[CONF_USERNAME].strip()
                 if not username or not user_input[CONF_PASSWORD]:
                     raise ValueError("Missing credentials")
@@ -61,10 +66,12 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 async with create_client(self.hass, url) as client:
                     user = await client.login(username, data[CONF_PASSWORD], self._device_id)
                 if not isinstance(user.get("guid"), str) or not user["guid"]:
+                    _LOGGER.debug("Config login rejected stage=account_identity")
                     errors["base"] = "invalid_response"
                 else:
                     data[CONF_ACCOUNT_ID] = user["guid"]
                     self._account_data = data
+                    _LOGGER.debug("Config login complete")
                     return await self.async_step_outputs()
             except ValueError:
                 errors["base"] = "invalid_input"
@@ -74,6 +81,7 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except FeiNiuError:
                 errors["base"] = "invalid_response"
+            _LOGGER.debug("Config login result=%s", errors.get("base", "unknown"))
         return self.async_show_form(
             step_id="user",
             errors=errors,
@@ -105,7 +113,12 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=self._account_data,
                     options={CONF_OUTPUTS: selected},
                 )
-            except (HomeAssistantError, ValueError):
+            except OutputValidationError as err:
+                errors["base"] = err.reason
+            except (HomeAssistantError, ValueError) as err:
+                _LOGGER.debug(
+                    "Output validation reason=invalid_output category=%s", type(err).__name__
+                )
                 errors["base"] = "invalid_output"
         return self.async_show_form(step_id="outputs", errors=errors, data_schema=output_schema([]))
 
@@ -142,11 +155,15 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ):
                     return self.async_abort(reason="identity_change")
                 password = user_input.get(CONF_PASSWORD) or entry.data[CONF_PASSWORD]
+                _LOGGER.debug(
+                    "Config password login begin address=%s", safe_address(entry.data[CONF_URL])
+                )
                 async with create_client(self.hass, entry.data[CONF_URL]) as client:
                     user = await client.login(
                         entry.data[CONF_USERNAME], password, entry.data[CONF_DEVICE_ID]
                     )
                 if user.get("guid") != entry.data[CONF_ACCOUNT_ID]:
+                    _LOGGER.debug("Config password login rejected stage=account_identity")
                     return self.async_abort(reason="identity_change")
                 return self.async_update_reload_and_abort(
                     entry, data_updates={CONF_PASSWORD: password}
@@ -159,6 +176,7 @@ class FeiNiuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except FeiNiuError:
                 errors["base"] = "invalid_response"
+            _LOGGER.debug("Config password login result=%s", errors.get("base", "unknown"))
         return self.async_show_form(
             step_id=step,
             errors=errors,
@@ -176,7 +194,13 @@ def output_schema(selected: list[str]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Optional(CONF_OUTPUTS, default=selected): EntitySelector(
-                EntitySelectorConfig(domain="media_player", multiple=True)
+                EntitySelectorConfig(
+                    filter={
+                        "domain": "media_player",
+                        "supported_features": ["media_player.MediaPlayerEntityFeature.PLAY_MEDIA"],
+                    },
+                    multiple=True,
+                )
             )
         }
     )
@@ -222,7 +246,12 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
             try:
                 selected = select_outputs(self.hass, user_input.get(CONF_OUTPUTS, []), options)
                 return self.async_create_entry(title="", data={**options, CONF_OUTPUTS: selected})
-            except (HomeAssistantError, ValueError):
+            except OutputValidationError as err:
+                errors["base"] = err.reason
+            except (HomeAssistantError, ValueError) as err:
+                _LOGGER.debug(
+                    "Output validation reason=invalid_output category=%s", type(err).__name__
+                )
                 errors["base"] = "invalid_output"
         selected_ids = [
             item.resolve(self.hass) or item.entity_id for item in bindings(options).values()

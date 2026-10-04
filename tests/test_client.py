@@ -3,6 +3,7 @@
 import asyncio
 import errno
 import json
+import logging
 import socket
 import traceback
 from collections.abc import AsyncIterator
@@ -25,6 +26,58 @@ from custom_components.feiniu_music.client import (
     classify_media,
     make_signature,
 )
+
+
+@pytest.mark.parametrize(
+    "payload,status,stage",
+    [
+        (b"PRIVATE_PAYLOAD", 302, "http_status"),
+        (b"<html>PRIVATE_PAYLOAD</html>", 200, "json_decode"),
+        (b'{"PRIVATE_PAYLOAD":"PRIVATE_PAYLOAD"}', 200, "envelope"),
+        (b'{"code":123456,"msg":"PRIVATE_PAYLOAD"}', 200, "business_code"),
+        (b'{"code":0,"PRIVATE_PAYLOAD":"PRIVATE_PAYLOAD"}', 200, "data_missing"),
+        (b'{"code":0,"data":"PRIVATE_PAYLOAD"}', 200, "data_shape"),
+        (b'{"code":0,"data":{"userToken":""}}', 200, "credentials_shape"),
+        (
+            b'{"code":0,"data":{"userToken":"PRIVATE_PAYLOAD","user":"PRIVATE_PAYLOAD"}}',
+            200,
+            "user_shape",
+        ),
+    ],
+)
+async def test_debug_classifies_response_stage_without_response_or_credentials(
+    caplog, payload, status, stage
+):
+    caplog.set_level(logging.DEBUG, logger="custom_components.feiniu_music")
+    client = client_with(
+        Response(
+            payload,
+            status,
+            {
+                "Cookie": "PRIVATE_PAYLOAD",
+                "Location": "http://private.invalid/?authSig=PRIVATE_PAYLOAD",
+            },
+        )
+    )
+    with pytest.raises(ProtocolError):
+        await client.login("PRIVATE_ACCOUNT", "PRIVATE_PASSWORD", "a" * 32)
+    records = [r for r in caplog.records if r.name.startswith("custom_components.feiniu_music")]
+    assert any(f"stage={stage}" in r.getMessage() for r in records)
+    assert all(r.exc_info is None for r in records)
+    logged = str([(r.msg, r.args) for r in records])
+    assert "PRIVATE_" not in logged and "authSig" not in logged and "a" * 32 not in logged
+
+
+async def test_debug_network_exception_payload_is_not_logged(caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.feiniu_music")
+    client = client_with(
+        aiohttp.ClientPayloadError("Authorization PRIVATE_URL?authSig=PRIVATE_TOKEN")
+    )
+    with pytest.raises(NetworkError):
+        await client.current_user()
+    records = [r for r in caplog.records if r.name.startswith("custom_components.feiniu_music")]
+    assert any("NetworkError" in r.getMessage() for r in records)
+    assert "PRIVATE_" not in str([(r.msg, r.args, r.exc_info) for r in records])
 
 
 @pytest.mark.parametrize(
