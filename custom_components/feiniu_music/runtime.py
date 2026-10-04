@@ -390,7 +390,11 @@ class FeiNiuRuntime:
                     self._browse_flights.pop(key)
                 if not task.done():
                     task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                    await asyncio.gather(task, return_exceptions=True)
+                elif not task.cancelled():
+                    # Observe a completed exception without yielding after the
+                    # consumer's epoch check. That check and delivery stay atomic.
+                    task.exception()
 
     async def _read_browse(
         self,

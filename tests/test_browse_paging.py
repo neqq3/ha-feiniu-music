@@ -239,6 +239,30 @@ async def test_invalidation_between_worker_completion_and_consumer_resume(runtim
     assert not runtime._browse_flights and not runtime._browse_waiters
 
 
+async def test_success_cleanup_does_not_yield_between_access_check_and_delivery(runtime, client):
+    invalidated = False
+
+    def invalidate():
+        nonlocal invalidated
+        runtime._invalidate_metadata()
+        invalidated = True
+
+    async def fetch(*args):
+        # Schedule invalidation one callback turn later. Successful delivery must
+        # finish before that turn, not yield again while cleaning an already-done job.
+        asyncio.current_task().add_done_callback(
+            lambda task: asyncio.get_running_loop().call_soon(invalidate)
+        )
+        return {"list": [track("test")], "total": 1}
+
+    client.page.side_effect = fetch
+    result = await runtime.browse_page("track")
+    assert result.rows[0]["guid"] == "test" and not invalidated
+    assert not runtime._browse_flights and not runtime._browse_waiters
+    await asyncio.sleep(0)
+    assert invalidated and not runtime._browse_results
+
+
 async def test_page_cache_is_account_local_and_metadata_is_compact(runtime, client, hass):
     row = track("test", coverId="test", filePath="PRIVATE", tags=["PRIVATE"] * 100)
     row["artists"] = [{"guid": "test", "name": "test", "coverId": "test", "albums": [row.copy()]}]
