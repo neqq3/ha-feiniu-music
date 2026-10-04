@@ -225,6 +225,20 @@ async def test_unload_while_waiting_for_relogin(runtime, client):
     assert not runtime._browse_waiters
 
 
+async def test_invalidation_between_worker_completion_and_consumer_resume(runtime, client):
+    async def fetch(*args):
+        # Complete the native read, then invalidate in the callback turn before
+        # shield() wakes its consumer. A writer-only epoch check misses this race.
+        asyncio.current_task().add_done_callback(lambda task: runtime._invalidate_metadata())
+        return {"list": [track("old-test")], "total": 1}
+
+    client.page.side_effect = fetch
+    with pytest.raises(NetworkError, match="access changed"):
+        await runtime.browse_page("track")
+    assert not runtime._browse_results and not runtime._cover_owners
+    assert not runtime._browse_flights and not runtime._browse_waiters
+
+
 async def test_page_cache_is_account_local_and_metadata_is_compact(runtime, client, hass):
     row = track("test", coverId="test", filePath="PRIVATE", tags=["PRIVATE"] * 100)
     row["artists"] = [{"guid": "test", "name": "test", "coverId": "test", "albums": [row.copy()]}]

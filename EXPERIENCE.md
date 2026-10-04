@@ -16,6 +16,9 @@
    弹层复用所选播放器，关闭不会停止播放或重建队列。完整模式适合单卡片的 HA 面板视图。
    YAML 示例见 `examples/dashboard.yaml`；起播与续播配置仍属于集成，每个输出独立保存。
 3. 在卡片「选择音乐」里展开专辑、歌单、歌手歌曲或所有歌曲。
+   歌曲、专辑、歌手及专辑／歌手内容按页读取，每页最多 100 项；底部可翻页。
+   侧栏歌单不会挡住主列表，封面仍按需加载。切换分类立即更新标题，等待时不保留旧数量。
+   歌单内歌曲及搜索结果仍完整读取；等待超过限定时间可重试，不会把部分结果当成空库。
    「播放整个列表」开始连续播放；单曲的加号只追加这首；下一首加入不会立即发声。
    点歌曲直接播放会保留它的列表上下文。纯 media_source 直接投送仍是单曲能力。
 4. 两个输出可同时拥有不同队列。队列中的重复歌曲是不同条目，可以分别移动、删除或跳转。
@@ -49,6 +52,9 @@
 Select outputs in integration options, refresh the browser for the automatically registered card, and replace entity IDs in
 `examples/dashboard.yaml`. Browse a list and play it, or add individual songs without starting
 an empty queue. Each fixed output owns its queue, occurrence IDs, repeat/shuffle and lyric offset.
+Library categories and album/artist relationships load up to 100 items per page. Optional sidebar
+playlists do not block main content. Play all still selects the entire list, including on later pages.
+Playlist occurrences and search results remain complete reads; timeouts expose a retry action.
 Reload restores queues idle; explicit Play revalidates access and requests supported native resume.
 Inspect diagnostics when a device does not confirm playback. HTTP delivery is not proof of sound.
 Integration options → Playback compatibility selects one FeiNiu player before editing its

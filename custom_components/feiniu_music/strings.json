@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect FeiNiu Music",
-        "description": "Use a regular music account; no NAS administrator account is needed. Copy the full FeiNiu Music page address from your browser, for example http://192.168.1.100:5666/music/ . Keep the actual port: a default installation usually uses 5666. Custom ports, HTTPS reverse proxies and server root URLs are also supported.",
+        "description": "Use a regular music account; no NAS administrator account is needed. Copy the full FeiNiu Music page address from your browser, for example http://test:5666/music/ (replace test with your NAS address). Keep the actual port: a default installation usually uses 5666. Custom ports, HTTPS reverse proxies and server root URLs are also supported.",
         "data": {
           "url": "Music service URL",
           "username": "Music username",

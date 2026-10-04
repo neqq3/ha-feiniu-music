@@ -9,6 +9,13 @@ This project retains Apache License 2.0 (included as LICENSE).
 Changes: independent exception types, HA session integration and authenticated
 HTTP media delivery. The original provider is not a runtime dependency.
 
+The browse/access-status and bounded backoff work also references the final
+merged provider at Music Assistant server dev commit
+2168c3a5db695e6de3878d41043ef76766d96c65 (PR #6416), under Apache-2.0.
+Its endpoint-specific playlist validation, compact metadata and lifecycle
+principles are adapted to HA's own models and account-scoped request lanes;
+MA cache/database/session controllers are not bundled or required.
+
 FeiNiu Music and fnOS are names of their respective owners. This project is
 unofficial.
 

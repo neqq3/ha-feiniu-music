@@ -372,9 +372,16 @@ class FeiNiuRuntime:
         else:
             self._browse_count("merged")
         self._browse_waiters[task] = self._browse_waiters.get(task, 0) + 1
+        epoch = self._cache_epoch
         try:
             # A cancelled tab/waiter does not cancel the other consumers.
-            return deepcopy(await asyncio.shield(task))
+            result = await asyncio.shield(task)
+            # Invalidation can run after the worker completed but before a shielded
+            # caller resumes. Check the consumer boundary as well as the writer.
+            self._check_epoch(epoch)
+            if self._browse_flights.get(key) is not task:
+                raise NetworkError("Music read was superseded; retry")
+            return deepcopy(result)
         finally:
             self._browse_waiters[task] -= 1
             if not self._browse_waiters[task]:

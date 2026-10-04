@@ -48,7 +48,7 @@
 ## 连接飞牛音乐
 
 1. 打开 **设置 → 设备与服务 → 添加集成**，搜索 **FeiNiu Music**。
-2. 建议直接复制浏览器中飞牛音乐页面的完整地址，例如 `http://192.168.1.100:5666/music/`，再填写音乐账号的用户名和密码。**请保留实际端口号**；默认安装通常使用 5666，自定义端口和 HTTPS 反向代理也可以，服务根地址同样支持。
+2. 建议直接复制浏览器中飞牛音乐页面的完整地址，例如 `http://test:5666/music/`（将 `test` 换成你的 NAS 地址），再填写音乐账号的用户名和密码。**请保留实际端口号**；默认安装通常使用 5666，自定义端口和 HTTPS 反向代理也可以，服务根地址同样支持。
 3. 选择要使用的音箱。以后也可以在集成配置中增删。
 
 配置完成后，每台选中的音箱会对应一个飞牛播放器实体。打开它的“浏览媒体”，即可按歌曲、专辑、歌手或歌单选曲。
@@ -66,6 +66,8 @@
 <p align="center"><sub>HA 原生媒体源：FeiNiu Music 与其他媒体源一起出现在媒体浏览器中。</sub></p>
 
 不使用我们的卡片也能从原生媒体浏览器选曲，或在自动化的“播放媒体”动作中选择飞牛音乐。要使用本集成的独立队列和自动续播，请将目标设为集成创建的飞牛播放器实体。
+
+卡片和原生媒体浏览器中的歌曲、专辑、歌手及专辑／歌手内容每页最多显示 100 项，可以继续翻页。**播放全部仍会选择完整列表**。歌单内歌曲和搜索结果目前完整读取；加载失败或超时后可以重试。
 
 ## 添加音乐卡片
 
@@ -85,8 +87,8 @@
 
 ```yaml
 type: custom:feiniu-music-card
-entity: media_player.your_feiniu_output
-title: 客厅音乐
+entity: media_player.feiniu_test
+title: test
 display_mode: compact
 compact_view: auto
 compact_background: artwork
@@ -139,7 +141,7 @@ path: music
 type: panel
 cards:
   - type: custom:feiniu-music-card
-    entity: media_player.your_feiniu_output
+    entity: media_player.feiniu_test
     display_mode: full
 ```
 
@@ -184,7 +186,8 @@ cards:
 
 | 遇到的情况 | 怎么检查 |
 | --- | --- |
-| 无法连接，或提示“音乐服务返回了非预期响应” | 核对飞牛音乐页面的完整地址与实际端口，例如 `http://192.168.1.100:5666/music/`。漏掉端口可能连到另一个网页服务；使用反向代理时也要确认地址正确。HA 主机必须能访问这个地址，仅手机或电脑能打开还不够。 |
+| 无法连接，或提示“音乐服务返回了非预期响应” | 核对飞牛音乐页面的完整地址与实际端口，例如 `http://test:5666/music/`（替换 `test`）。漏掉端口可能连到另一个网页服务；使用反向代理时也要确认地址正确。HA 主机必须能访问这个地址，仅手机或电脑能打开还不够。 |
+| 音乐库一直加载或切换列表失败 | 等待错误提示后点击重试。若反复出现，请在问题发生后下载 Diagnostics，说明打开的是哪个分类或搜索入口。诊断会记录有限的浏览请求耗时和错误类别，不需要提供账号或歌曲名称。 |
 | HA 里有音箱，但输出列表里找不到 | `media_player` 不一定能加载新的媒体。列表按“播放指定媒体”（`PLAY_MEDIA`）能力过滤；只有播放/暂停或音量控制的实体不能作为输出。先确认音箱在线，并查看接入它的集成是否提供这项能力。 |
 | 能选择，但一直加载、没有声音或不能自动切歌 | 在问题发生后先下载下文的 Diagnostics；必要时开启调试日志，再复现一次。可选中只说明声明了最低能力，实际还取决于音箱能否访问 HA 音频地址、格式支持和设备反馈。 |
 | 部分格式不能播放 | 本集成不转码，音频由底层播放器解码，最终格式支持取决于音箱及其 HA 集成。 |
@@ -229,9 +232,11 @@ The compact card offers simple, lyrics, and automatic modes. Automatic mode show
 
 Requires **Home Assistant 2025.12.2 or newer**. Connect your speakers to HA first, then add this repository to HACS as an **Integration**, install **FeiNiu Music**, and restart HA. Add the integration under **Settings → Devices & services**, sign in with a regular FeiNiu Music account, and select your speakers. FN ID and NAS OAuth are not supported.
 
-Copy the full music page URL from your browser, for example `http://192.168.1.100:5666/music/`. **Keep the actual port**; default installations usually use 5666, but custom ports, HTTPS reverse proxies and server root URLs are supported. The integration does not automatically add port 5666.
+Copy the full music page URL from your browser, for example `http://test:5666/music/` (replace `test` with your NAS address). **Keep the actual port**; default installations usually use 5666, but custom ports, HTTPS reverse proxies and server root URLs are supported. The integration does not automatically add port 5666.
 
 The card and generated FeiNiu players support search on all supported HA versions. Search in HA's global native media-source browser depends on the HA version.
+
+Library categories and album/artist contents load up to 100 items per page in both the card and native browser. **Play all still selects the whole list**. Playlist tracks and search results remain complete reads. Failed or timed-out browsing can be retried; repeated failures can be reported with HA Diagnostics, which includes bounded browse timings and error categories without account names or search text.
 
 The bundled card registers and updates automatically. After setting up the integration, refresh your browser and add a **FeiNiu Music** card through the visual editor. Only YAML-managed dashboard resources require the manual resource entry above. **Both compact cards and full music pages must use the FeiNiu player entity created by this integration for the chosen account and speaker—not an arbitrary media player or the underlying speaker entity.** See [examples/dashboard.yaml](examples/dashboard.yaml) for compact and full-page layouts.
 
@@ -243,7 +248,7 @@ The DLNA library bundled with older HA versions, including 2025.12.2, may omit a
 
 | Symptom | What to check |
 | --- | --- |
-| Connection fails or returns an unexpected response | Check the full music URL and actual port, such as `http://192.168.1.100:5666/music/`. Omitting the port may reach another web service. Verify reverse-proxy routing and connectivity from the HA host, not just your phone or PC. |
+| Connection fails or returns an unexpected response | Check the full music URL and actual port, such as `http://test:5666/music/` (replace `test`). Omitting the port may reach another web service. Verify reverse-proxy routing and connectivity from the HA host, not just your phone or PC. |
 | Speaker exists in HA but is absent from the output list | A `media_player` may only expose play/pause or volume controls. Outputs are filtered for loading specified media (`PLAY_MEDIA`). Check that the speaker is online and its integration provides this capability. |
 | Selectable output stays loading, is silent or fails to advance | Download diagnostics after the problem occurs, then reproduce once with debug logging if needed. Selection only checks declared minimum capabilities; network access to HA audio URLs, format support and device feedback still matter. |
 | Some formats fail | This integration does not transcode. The underlying player decodes the audio; supported formats depend on the speaker and its HA integration. |

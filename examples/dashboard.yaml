@@ -7,14 +7,14 @@ views:
     path: music
     cards:
       - type: custom:feiniu-music-card
-        entity: media_player.feiniu_living_room
+        entity: media_player.feiniu_test
         display_mode: compact
         compact_view: auto
         compact_background: artwork
         compact_mask: soft
         theme: dark
       - type: custom:feiniu-music-card
-        entity: media_player.feiniu_study
+        entity: media_player.feiniu_test_2
         display_mode: compact
         compact_view: simple
         compact_background: default
@@ -24,5 +24,5 @@ views:
     type: panel
     cards:
       - type: custom:feiniu-music-card
-        entity: media_player.feiniu_living_room
+        entity: media_player.feiniu_test
         display_mode: full

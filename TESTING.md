@@ -27,6 +27,32 @@ requires Python 3.14. Ruff always checks our source against the Python 3.13 base
 The frontend job runs `npm test`, rebuilds and compares the bundled card, then runs
 `npm run test:browser` with Playwright Chromium. Browser checks cover compact/full
 layouts, touch controls, search, lyrics, and the visual editor using synthetic HA messages.
+It also runs the browse lifecycle checks with `CARD_BROWSER_ENGINE=webkit`, using
+touch/mobile emulation. This is not a physical iPhone or HA Companion WebView test.
+
+## Paged browsing and lifecycle — 2026-10-04
+
+Regression tests were committed before the implementation: both HA matrix jobs
+reproduced 13 failures while the original 375 tests still passed. These establish
+the old global-lock, whole-list and TTL mechanisms with a fake backend, not a
+reproduction of a user's NAS or speaker problem.
+
+The new suite covers page-level reads, full queue selection, single-flight cancellation,
+bounded admission, access epochs, playlist status validation, Retry-After and diagnostic
+privacy. Frontend checks defer main/sidebar/image replies, expire a request, simulate a
+disconnect, switch entities during a pending reply, and close/reopen/detach the card.
+The existing strict lyric-scroll assertion remains; its fixture now waits until a prior
+smooth keyboard scroll has settled before testing subsequent position updates.
+
+`tests/test_browse_benchmark.py` emits six synthetic measurements per HA version to
+`artifacts/browse-*.json`. Actions uploads them as `browse-ha-<version>`. They contain
+only fake library sizes, elapsed times, request counts and Python allocation peaks.
+Both full enumeration and first-page reads use allocation tracing for comparable
+instrumentation; no exact timing threshold determines pass/fail.
+
+See [browse performance and cache boundaries](docs/BROWSE_PERFORMANCE.md) for the
+verified run, measured values, call graph, upstream comparison and remaining limits.
+Earlier live-service observations below belong to their dated changes, not this round.
 
 ## Automatic card registration — 0.2.2
 
