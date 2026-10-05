@@ -30,10 +30,11 @@ layouts, touch controls, search, lyrics, and the visual editor using synthetic H
 It also runs the browse lifecycle checks with `CARD_BROWSER_ENGINE=webkit`, using
 touch/mobile emulation. This is not a physical iPhone or HA Companion WebView test.
 
-## Playback feedback implementation — 2026-10-05 (local, not release acceptance)
+## Playback feedback compatibility — 2026-10-05
 
-Baseline: `6b8de851dee7376b26ccdb7cdc95ee3e30b9cd5b`, branch
-`dev/browse-performance-checks`. No real HA, NAS or speakers were changed.
+Implementation baseline: `6b8de85`. The reviewed production code is in `d1dae85`;
+`09e4297` only corrects a delayed-failure test double so the exception is raised
+inside the service coroutine instead of an unconsumed future.
 
 The added controlled-clock suite uses real HA `State` objects, a synthetic output
 adapter and controlled service/wait futures. It covers all 24 legacy profiles,
@@ -43,36 +44,47 @@ queue modes, seek gating and privacy. Migration transforms cover all 24 profiles
 offline/deselected records, account isolation, corruption and idempotence. Native HA
 Store and options-flow tests are also added to the normal Linux suite.
 
-Local Windows / HA 2026.9.4 / Python 3.14 supplemental checks:
-
-```powershell
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'
-.venv-feedback/Scripts/python.exe -m pytest --noconftest -p pytest_asyncio.plugin -p no:cacheprovider tests/test_feedback_compatibility.py tests/test_feedback_storage.py tests/test_timeline.py
-```
-
-Result: 197 passed (149 session/feature/privacy, 30 migration transforms, 18 existing
-timeline tests). This explicitly bypasses the HA pytest plugin and is **not** the
-full HA integration suite. An additional local differential run loaded the original
-baseline session code from Git: all 72 baseline/current pairs matched across
-24 profiles and three traces (fast confirmation/natural end, strict timeout/late
-feedback, pause/resume/seek/stop).
-
-The full HA 2026.9.4 pytest plugin cannot load on this Windows host: its runner
-imports Linux `fcntl`. The HA 2025.12.2 environment also cannot finish its pinned
-dependency install because `lru-dict==1.3.0` needs an unavailable Windows C++ compiler.
-The full Linux checks subsequently passed for commit `0634f28c` in
-[Actions #37257824516](https://github.com/neqq3/ha-feiniu-music/actions/runs/37257824516):
-HA 2025.12.2 / Python 3.13 and HA 2026.9.4 / Python 3.14 each passed **630 tests**,
+Final-review regressions cover pending-resume timing, superseded service results,
+buffering, short-track queue completion and concurrent options edits. The full
+Linux checks passed for `09e4297` in
+[Actions #37265917745](https://github.com/neqq3/ha-feiniu-music/actions/runs/37265917745):
+HA 2025.12.2 / Python 3.13 and HA 2026.9.4 / Python 3.14 each passed **670 tests**,
 Ruff, formatting and mypy. The card passed **9 unit tests**, build consistency,
-Chromium and WebKit. The first CI attempt passed without implementation fixes,
-workflow changes, relaxed dependencies or skipped tests. This validates the
-synthetic suites, not physical speaker behavior.
+Chromium and WebKit. No tests were skipped or dependency constraints relaxed.
 
-The frontend now runs `feedback-check.mjs` on **both** Chromium and WebKit, covering
-English/Chinese settings, compatibility-only opt-in, runtime notices, disabled
-seek/lyric jumps and late confirmation. The regular Chromium suite and existing
-WebKit browse/artist regressions remain enabled. Later fixes require a new matrix run;
-the result above applies only to `0634f28c`.
+`feedback-check.mjs` runs on both Chromium and WebKit, covering English/Chinese
+settings, compatibility-only opt-in, runtime notices, disabled seek/lyric jumps
+and late confirmation. Existing browse/artist regressions remain enabled.
+
+### Limited device acceptance and remaining limits
+
+The same `09e4297` integration was checked on HA 2025.12.2, with Xiaomi Miot 1.1.1
+and HA's native `dlna_dmr`. These are software-state and transport observations;
+audible playback was not independently confirmed.
+
+- DLNA Standard completed three fixed-track Start/Seek/Next/Stop repetitions.
+  Each seek to 60 seconds produced native reports of 60, 69, 79 and 89 seconds,
+  with matching FeiNiu positions. Next confirmed in 1.33–1.45 seconds. The earlier
+  position rollback and one startup timeout did not recur; no baseline A/B was needed.
+- Miot Compatibility/manual retained an unconfirmed round, supported same-round
+  pause/resume and late confirmation, and gated seeking while unconfirmed.
+- Estimated continuation has live evidence for timer arming, pause/resume,
+  resume-pending protection, late-confirm cancellation and Stop/Next cancellation.
+  In the final three natural-wait attempts on a 45-second track, every round
+  entered assumed but confirmed before its calculated deadline. Each timer was
+  cancelled, with no estimated end or automatic queue advance.
+- **Natural estimated expiry and its once-only automatic next remain unverified
+  on real hardware.** Exact duration + 5-second timing, invalid/missing duration,
+  missing first-byte delivery and stale-callback guards have deterministic tests
+  in both HA CI jobs. They are not claims of acoustic or real-device expiry proof.
+- Miot's unavailable Stop action remains a device/integration limitation. Cleanup
+  used its existing Pause action; FeiNiu cannot guarantee physical audio silence.
+  Both outputs were restored to Standard/manual and their original other settings,
+  with debug logging restored and no retained lease or estimated timer.
+
+Private diagnostics, device identifiers and raw acceptance artifacts are not
+included in this repository. Results apply to these bounded checks, not all Miot
+models or a guarantee against network, format, buffering or external-control issues.
 
 ## Paged browsing and lifecycle — 2026-10-04
 
