@@ -839,6 +839,8 @@ async def test_superseded_resume_cannot_rearm_or_change_new_session(make, action
                 await asyncio.shield(gate)
             except asyncio.CancelledError:
                 await gate  # A service implementation may finish despite cancellation.
+            if fails:
+                raise HomeAssistantError("synthetic stale resume failure")
 
     h.output.hook = command
     resume = asyncio.create_task(h.session.start())
@@ -855,10 +857,7 @@ async def test_superseded_resume_cannot_rearm_or_change_new_session(make, action
         h.playing()
         await newer
     snapshot = (h.session.round_id, h.session.phase, h.session.owned, h.cancel.call_count)
-    if fails:
-        gate.set_exception(HomeAssistantError("synthetic stale resume failure"))
-    else:
-        gate.set_result(None)
+    gate.set_result(None)
     await asyncio.gather(resume, newer, return_exceptions=True)
     stale_callback()
     await h.tick(100)
