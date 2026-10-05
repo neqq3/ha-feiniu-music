@@ -344,7 +344,9 @@ export class FeiNiuMusicCard extends Base {
     if (this._connected) { this._build(); this._render(); }
   }
   getCardSize() { return this._config?.display_mode==='compact'?(this._compactRich?8:5):12; }
-  getGridOptions() { return this._config?.display_mode==='compact'?{columns:12,min_columns:9,rows:this._compactRich?8:5,min_rows:this._compactRich?8:5}:{columns:12,rows:12,min_columns:6,min_rows:8}; }
+  // Sections reads this before async lyrics arrive. A content-sized slot must
+  // follow auto mode growing/shrinking instead of retaining its initial 5 rows.
+  getGridOptions() { return this._config?.display_mode==='compact'?{columns:12,min_columns:9,rows:'auto'}:{columns:12,rows:12,min_columns:6,min_rows:8}; }
   static getStubConfig(hass) { return {entity:Object.keys(hass.states).find(id=>id.startsWith('media_player.')&&hass.states[id].attributes.feiniu_queue),display_mode:'compact',compact_view:'auto',compact_background:'artwork',compact_mask:'soft',theme:'dark'}; }
   static getConfigElement(){return document.createElement('feiniu-music-card-editor');}
   set hass(value) {

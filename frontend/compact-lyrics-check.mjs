@@ -21,7 +21,7 @@ export async function checkCompactLyrics(sourcePage){
     assert.equal(Math.round((await first.locator('.compact-heading').boundingBox()).height),32,'Header really shrinks by 14px instead of only changing text direction');
     assert.equal(Math.round((await first.locator('#compact-stage').boundingBox()).height),189,'Added height goes to lyrics');
     assert.equal(Math.round((await first.locator('#lyric-lines').boundingBox()).height),189,'Offset toolbar consumes no lyric height');
-    assert(await first.evaluate(c=>c.getGridOptions().rows===8),'HA reserves enough grid space for the taller lyrics card');
+    assert(await first.evaluate(c=>c.getGridOptions().rows==='auto'),'HA follows the actual card height as lyrics arrive');
     assert(await first.locator('.compact-labels').evaluate(e=>{const a=e.firstElementChild.getBoundingClientRect(),b=e.lastElementChild.getBoundingClientRect();return b.left>a.right&&Math.abs(a.bottom-b.bottom)<5;}),'Card and output names share one header line');
     assert.equal(await first.locator('.lyric-row.current p').textContent(),'Follows us home');
     assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/lyrics').length),1);
@@ -92,7 +92,7 @@ export async function checkCompactLyrics(sourcePage){
     assert.equal(await first.locator('#compact-stage').isVisible(),false,'Auto without lyrics is a simple card');
     assert(!(await first.locator('#lyric-lines').textContent()).includes('STALE'));
     const simpleHeight=(await first.boundingBox()).height;assert(simpleHeight<300);
-    assert(await first.evaluate(c=>c.getGridOptions().rows===5&&c.getCardSize()===5));
+    assert(await first.evaluate(c=>c.getGridOptions().rows==='auto'&&c.getCardSize()===5));
     await page.screenshot({path:'artifacts/card-preview/compact-auto-no-lyrics.png',fullPage:true});
     await first.evaluate(c=>{c.setConfig({...c._config,compact_view:'lyrics'});c.hass=hass;});
     assert((await first.locator('#lyric-lines').textContent()).includes('暂无歌词'));

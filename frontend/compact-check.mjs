@@ -8,7 +8,7 @@ export async function checkCompact(sourcePage){
     const first=page.locator('feiniu-music-card').first(),second=page.locator('feiniu-music-card').nth(1);
     await first.locator('#mini-open').waitFor();
     assert.deepEqual(await page.evaluate(()=>messages),[],'Collapsed dashboard cards do not load the library, queue pages or lyrics');
-    assert(await first.evaluate(c=>c.getCardSize()===5&&c.getGridOptions().rows===5));
+    assert(await first.evaluate(c=>c.getCardSize()===5&&c.getGridOptions().rows==='auto'));
     assert.deepEqual(await first.evaluate(c=>c.constructor.getStubConfig(hass)),{entity:'media_player.feiniu_a',display_mode:'compact',compact_view:'auto',compact_background:'artwork',compact_mask:'soft',theme:'dark'});
     const initial=await first.boundingBox();assert(initial.height<300&&initial.height>180,'Compact card has content-sized height');
     assert.equal(await first.locator('.compact-heading>feiniu-icon').count(),0,'The compact title has no leading music-note icon');

@@ -7,6 +7,7 @@ import {CARD_ICONS} from './card-icons.js';
 import {checkLyrics} from './lyrics-check.mjs';
 import {checkCompact} from './compact-check.mjs';
 import {checkCompactLyrics} from './compact-lyrics-check.mjs';
+import {checkCompactLayout} from './compact-layout-check.mjs';
 import {checkBrowse} from './browse-check.mjs';
 import {checkArtistBrowse} from './artist-browse-check.mjs';
 import {checkFeedback} from './feedback-check.mjs';
@@ -64,6 +65,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let browser;
 try{
  browser=await (process.env.CARD_BROWSER_ENGINE==='webkit'?webkit:chromium).launch({headless:true, ...(process.env.CARD_BROWSER_CHANNEL ? {channel:process.env.CARD_BROWSER_CHANNEL} : {})});
+ await checkCompactLayout(browser,`http://127.0.0.1:${server.address().port}`);
  await checkBrowse(browser,`http://127.0.0.1:${server.address().port}`);
  await checkArtistBrowse(browser,`http://127.0.0.1:${server.address().port}`);
  await checkFeedback(browser,`http://127.0.0.1:${server.address().port}`);
