@@ -489,8 +489,9 @@ async def test_native_profile_can_be_configured_offline_and_cancel_does_not_chan
     assert all(not output.calls for output in outputs)
 
 
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
 async def test_native_compatibility_step_is_conditional_and_saves_atomically(
-    hass, installed, entry
+    hass, installed, entry, policy
 ):
     manager, outputs = installed
     player = next(iter(manager.entities.values()))
@@ -502,7 +503,7 @@ async def test_native_compatibility_step_is_conditional_and_saves_atomically(
         flow["flow_id"], {**form, "feedback_mode": "compatibility"}
     )
     assert step["step_id"] == "unconfirmed_end"
-    assert step["data_schema"]({}) == {"estimated": False}
+    assert step["data_schema"]({}) == {"unconfirmed_end": "manual"}
     assert player.control.profile == before
     hass.config_entries.options.async_abort(step["flow_id"])
     assert player.control.profile == before
@@ -510,10 +511,12 @@ async def test_native_compatibility_step_is_conditional_and_saves_atomically(
     step = await hass.config_entries.options.async_configure(
         flow["flow_id"], {**form, "feedback_mode": "compatibility"}
     )
-    result = await hass.config_entries.options.async_configure(step["flow_id"], {"estimated": True})
+    result = await hass.config_entries.options.async_configure(
+        step["flow_id"], {"unconfirmed_end": policy}
+    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert player.control.profile.feedback_mode == "compatibility"
-    assert player.control.profile.unconfirmed_end == "estimated_duration"
+    assert player.control.profile.unconfirmed_end == policy
     assert player.control.feedback_mode == "standard"  # Next round, not retroactive.
     assert all(not output.calls for output in outputs)
     flow = await playback_options(hass, entry, player)
@@ -556,7 +559,11 @@ async def test_native_profile_refuses_unloaded_account(hass, entry):
 
 @pytest.mark.parametrize(
     "external",
-    [{"unconfirmed_end": "estimated_duration"}, {"feedback_mode": "standard"}],
+    [
+        {"unconfirmed_end": "estimated_duration"},
+        {"unconfirmed_end": "duration_fallback"},
+        {"feedback_mode": "standard"},
+    ],
 )
 async def test_native_second_step_preserves_concurrent_card_strategy(
     hass, installed, entry, hass_ws_client, external

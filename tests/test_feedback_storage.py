@@ -35,6 +35,17 @@ def migrator(account):
     return store
 
 
+@pytest.mark.parametrize("policy", ["manual", "estimated_duration", "duration_fallback"])
+def test_v2_profiles_round_trip_without_playback_runtime(policy):
+    profile = OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy)
+    _, data = legacy_record("a", "synthetic", profile)
+    data["profile"] = asdict(profile)
+    restored = SavedSession.restore(data, "a")
+    assert restored.profile == profile
+    assert restored.snapshot() == data
+    assert not any(key in str(data) for key in ("timer", "confirmation_stage", "estimated_elapsed"))
+
+
 @pytest.mark.parametrize(
     "values",
     list(

@@ -372,7 +372,7 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
                 current = asdict(player.control.profile)
                 baseline = {**self._profile_defaults, "unconfirmed_end": self._unconfirmed_default}
                 changes = dict(self._profile_pending)
-                selected = "estimated_duration" if user_input["estimated"] else "manual"
+                selected = user_input["unconfirmed_end"]
                 if selected != self._unconfirmed_default:
                     changes["unconfirmed_end"] = selected
                 # Unedited fields keep their latest value; conflicting edits require
@@ -400,11 +400,17 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        "estimated",
-                        default=user_input["estimated"]
+                        "unconfirmed_end",
+                        default=user_input["unconfirmed_end"]
                         if user_input is not None
-                        else self._unconfirmed_default == "estimated_duration",
-                    ): BooleanSelector(),
+                        else self._unconfirmed_default,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["manual", "estimated_duration", "duration_fallback"],
+                            translation_key="unconfirmed_end",
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                 }
             ),
         )

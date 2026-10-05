@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {FeiNiuMusicCard} from './feiniu-music-card.js';
 
-const keys=['settings','feedbackMode','standardMode','compatibilityMode','feedbackHelp','estimateEnd','estimateHelp','confirmationHelp','awaitingFeedback','assumedFeedback','pauseRequested','resumeRequested','late_confirmed','estimated_end','durationUnknown','seekUnconfirmed'];
+const keys=['settings','feedbackMode','standardMode','compatibilityMode','feedbackHelp','estimateEnd','estimateHelp','endFeedback','endUnconfirmed','endFallback','confirmationHelp','awaitingFeedback','assumedFeedback','pauseRequested','resumeRequested','late_confirmed','estimated_end','durationUnknown','seekUnconfirmed'];
 test('feedback labels exist distinctly in both card languages',()=>{
  for(const key of keys){
   const en=FeiNiuMusicCard.prototype.t.call({_hass:{language:'en'}},key);

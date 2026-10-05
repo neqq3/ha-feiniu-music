@@ -173,7 +173,17 @@ cards:
 
 如果音箱已经接收播放请求，但状态反馈经常延迟或一直停在暂停，可以对这台输出开启**兼容：未确认时保持会话**。确认超时后，卡片会显示“播放未确认 · 会话已保留”，进度标明为估算。仍可暂停、恢复或手动切歌；未确认前不能拖动进度或点击歌词跳转。恢复只发送播放动作，不重新加载整首。即使本轮后来收到确认，暂停和恢复仍保留兼容处理。
 
-兼容模式下还可以单独开启**未确认时按估算时长自动续播**，默认关闭。必须有成功返回的播放请求、本轮首次音频交付和有效时长才会计时：以请求返回和首次交付中较晚的时间为起点，等待**歌曲时长 + 5 秒**。通过飞牛暂停会冻结计时，恢复后继续剩余时间；迟到的播放确认会取消估算续播，改用正常结束判断。只有 HEAD、GET 或传输 EOF 不会触发切歌，整首提前缓存完也不会直接跳过。
+兼容模式的**续播策略**有三个选项，卡片设置和集成配置都可以修改：
+
+| 选项 | 适用情况 |
+| --- | --- |
+| 等待设备结束反馈（默认） | 设备能正常报告播放结束 |
+| 未确认播放时，按时长兜底 | 起播反馈缺失；确认起播后取消计时，保留原有行为 |
+| 始终保留时长兜底 | 能报告播放中，却不报告结束，或反复播放收到的单首歌曲；确认起播后仍保留计时 |
+
+两种时长兜底都需要播放请求成功返回、本轮首次音频交付和有效时长，以请求返回和首次交付中较晚的时间开始，等待**歌曲时长 + 5 秒**。只有 HEAD、GET 或传输 EOF 不会触发切歌，整首提前缓存完也不会直接跳过。
+
+“始终保留”中，通过飞牛暂停或收到已确认输出的暂停／缓冲反馈会冻结计时，恢复后继续剩余时间；通过飞牛跳转且收到有效进度确认后，重新计算剩余时间。设备自行把进度跳回开头不会重置计时。可信结束反馈和估算到期只会推进一次队列，停止、手动切歌或检测到外部接管都会取消旧计时。最后一首估算结束且循环关闭时，飞牛撤销音频流，并在输出支持时发送停止或暂停；没有这两项能力的设备可能继续播放已缓存音频。
 
 估算不能保证音箱真正播完：启动延迟、缓冲、时长误差，或没有上报的外部 App／音箱按键暂停，都可能让切歌提前或延后。5 秒只是余量，不是可靠的缓冲上界；`first_byte` 也不证明已经发声。没有媒体标识或来源变化时，外部接管无法可靠识别。
 
@@ -181,7 +191,7 @@ cards:
 
 起播确认的两个选项都要求当前媒体关联和输出报告“播放中”；默认还要求本轮音频传输或至少两个有效新进度样本。“结束候选状态”和放宽结束判断只适用于已确认播放的状态转换，不会启用估算续播。“加载后补发一次播放”也只在尚未确认、媒体可识别且支持播放动作时执行一次，不循环重试。
 
-播放反馈模式和估算续播开关在**下一轮播放**生效，保存不打断当前歌曲；原有四项设置仍即时生效。队列存储会从 v1 升级为 v2，保留全部输出的队列、顺序、循环、随机、原生保存位置及歌词偏移。重启只恢复队列，不自动播放或恢复估算计时。回滚旧版前请备份 `.storage/feiniu_music.queues.*` 并使用升级前备份；旧版不能直接读取 v2 文件，勿直接改版本号。
+播放反馈模式和续播策略在**下一轮播放**生效，保存不打断当前歌曲；原有四项设置仍即时生效。队列存储会从 v1 升级为 v2，保留全部输出的队列、顺序、循环、随机、原生保存位置及歌词偏移。重启只恢复队列，不自动播放或恢复估算计时。回滚旧版前请备份 `.storage/feiniu_music.queues.*` 并使用升级前备份；旧版不能直接读取 v2 文件，勿直接改版本号。回退到尚不支持“始终保留时长兜底”的版本前，也需先将所有启用了该策略的输出改回旧选项，或恢复该版本能读取的备份。
 
 暂停、音量、进度跳转和音频格式支持取决于底层音箱及其 HA 集成。音频由音箱解码，本集成不提供转码。
 
@@ -244,13 +254,23 @@ Each output defaults to **Standard** feedback with manual continuation when unco
 
 Choose **Compatibility: keep the session when unconfirmed** for delayed or missing feedback. After a successful play request and confirmation timeout, FeiNiu retains the round and labels playback unconfirmed and position estimated. Pause freezes the local clock; resume sends `media_play` without reloading the track, including after late confirmation. Seeking and lyric jumps are disabled until confirmed. A local pause/resume request is not proof of the physical speaker's state.
 
-**Advance by estimated duration when playback is unconfirmed** is a separate, off-by-default compatibility option. It requires a successful command return, first-byte delivery for the current round and a finite positive duration. Using a monotonic clock, the deadline is the later of command return and first-byte delivery, plus **duration + 5 seconds**. FeiNiu pauses suspend the clock; resume preserves its remaining time. Late confirmation cancels estimation permanently for that round and restores normal completion rules. HEAD, GET, EOF and early whole-file caching never directly mean playback has finished.
+Compatibility offers three **continuation strategies** in both integration options and card settings:
+
+| Choice | Behavior |
+| --- | --- |
+| Wait for device end feedback (default) | Uses normal completion feedback |
+| Duration fallback only while unconfirmed | Preserves the existing behavior: confirmation cancels estimation for that round |
+| Keep duration fallback after confirmation | Keeps the deadline for outputs that report playing but omit end feedback or loop the supplied track |
+
+Both duration options require successful command return, first-byte delivery for the current round and a finite positive duration. The monotonic clock starts at the later of command return and delivery, then waits **duration + 5 seconds**. HEAD, GET, EOF and early whole-file caching never directly mean playback has finished.
+
+Persistent fallback freezes on FeiNiu Pause or a confirmed output's pause/buffering report, and resumes with the remaining time. A seek through FeiNiu recalculates it only after valid position feedback. Unsolicited device position wraps do not restart the clock. Valid end feedback and deadline expiry advance the queue only once; Stop, manual track changes and detected takeover cancel the old deadline. At the end of a non-repeating queue, estimated completion revokes the stream and sends Stop or Pause when supported; devices without either capability may keep playing buffered audio.
 
 Delayed starts, buffering, inaccurate durations and unreported external pauses may still cause early or late changes. The 5-second grace is not a reliable buffering bound; `first_byte` is not audible proof. Unknown media identity limits attribution, and takeover without observable identity/source changes cannot reliably be detected. **HA `playing` can be an assumed state in compatibility mode.** `confirmation_stage` records the confirmation history of the current or most recent round; it cannot establish that playback is still active. Automations checking for current confirmed playback should at least combine `confirmation_stage == confirmed`, `queue_active == true`, and an HA state of `playing`. These software states do not prove audible playback or guarantee that later reports are reliable.
 
 Feedback mode and estimated continuation take effect on the **next playback round**. The four existing preferences keep immediate-update behavior. Candidate end-state/weak-end options apply only after confirmed playback and can mistake manual pause/stop for completion; they do not enable estimated continuation. Extra Play is sent at most once while unconfirmed, with matched media and PLAY support.
 
-Queue storage migrates from v1 to v2 while preserving all outputs, queues, order, repeat/shuffle, saved native position and lyric offset. Restart restores queues only, without playback or timers. Before rolling back, back up `.storage/feiniu_music.queues.*` and restore a pre-upgrade backup: old versions cannot read v2 directly. Do not merely change its version number. This change does not address transient DLNA idle reports or modify Xiaomi Miot upstream behavior.
+Queue storage migrates from v1 to v2 while preserving all outputs, queues, order, repeat/shuffle, saved native position and lyric offset. Restart restores queues only, without playback or timers. Before rolling back, back up `.storage/feiniu_music.queues.*` and restore a pre-upgrade backup: old versions cannot read v2 directly. Do not merely change its version number. Before reverting to a version without persistent duration fallback, change every output using it back to an older strategy or restore a compatible backup. This change does not address transient DLNA idle reports or modify Xiaomi Miot upstream behavior.
 
 An unofficial Home Assistant integration for FeiNiu Music. Browse your library, **play through speakers already connected to Home Assistant**, and manage a separate queue for each output. **Multiple FeiNiu Music accounts can be connected at the same time**; add the integration again for each additional account. The integration also provides a native HA media source (`media_source`) for media browsing and automations without the custom card.
 

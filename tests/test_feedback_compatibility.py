@@ -317,9 +317,13 @@ async def test_estimate_zero_later_of_command_and_delivery_and_exact_grace(make,
     )
 
 
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
 @pytest.mark.parametrize("duration", [None, 0, -1, float("nan"), float("inf"), True, "10"])
-async def test_invalid_duration_keeps_session_but_never_schedules(make, duration):
-    h = make(estimated=True, duration=duration)
+async def test_invalid_duration_keeps_session_but_never_schedules(make, duration, policy):
+    h = make(
+        profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy),
+        duration=duration,
+    )
     task = await h.begin()
     h.byte()
     await h.expire(task)
@@ -329,9 +333,10 @@ async def test_invalid_duration_keeps_session_but_never_schedules(make, duration
     assert h.session.estimated_end_blocked_reason == "duration_unknown"
 
 
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
 @pytest.mark.parametrize("events", [[], ["head"], ["get"], ["head", "get", "eof"]])
-async def test_no_first_byte_is_never_eligible(make, events):
-    h = make(estimated=True)
+async def test_no_first_byte_is_never_eligible(make, events, policy):
+    h = make(profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy))
     task = await h.begin()
     for event in events:
         h.session.stream_event(1, event)
@@ -386,10 +391,22 @@ async def test_late_confirmation_has_priority_over_estimated_inference(make, sam
     "action",
     ["next", "previous", "new", "stop", "close", "error", "unavailable", "foreign", "displace"],
 )
-async def test_terminal_intent_invalidates_even_already_queued_timer(make, action):
-    h = make(estimated=True, duration=10)
+@pytest.mark.parametrize("confirmed_fallback", [False, True])
+async def test_terminal_intent_invalidates_even_already_queued_timer(
+    make, action, confirmed_fallback
+):
+    h = make(
+        profile=OutputProfile(
+            feedback_mode="compatibility",
+            unconfirmed_end="duration_fallback" if confirmed_fallback else "estimated_duration",
+        ),
+        duration=10,
+    )
     task = await h.begin()
     h.byte()
+    if confirmed_fallback:
+        h.playing()
+        await task
     timer = h.session._estimated_end
     # Preserve the old callback to simulate cancellation losing a scheduling race.
     callback = timer._callback
@@ -472,8 +489,17 @@ async def test_buffering_freezes_and_eof_cannot_restart_estimate(make):
 
 
 @pytest.mark.parametrize("repeat,shuffle", [("one", False), ("all", False), ("off", True)])
-async def test_estimated_end_uses_current_queue_order_once(make, repeat, shuffle):
-    h = make(estimated=True, duration=10)
+@pytest.mark.parametrize("confirmed_fallback", [False, True])
+async def test_estimated_end_uses_current_queue_order_once(
+    make, repeat, shuffle, confirmed_fallback
+):
+    h = make(
+        profile=OutputProfile(
+            feedback_mode="compatibility",
+            unconfirmed_end="duration_fallback" if confirmed_fallback else "estimated_duration",
+        ),
+        duration=10,
+    )
     s = h.session
     if repeat == "all":
         s.queue.jump(s.queue.order[-1], s.queue.revision)
@@ -481,6 +507,9 @@ async def test_estimated_end_uses_current_queue_order_once(make, repeat, shuffle
     h.byte()
     s.queue.set_repeat(repeat)
     s.queue.set_shuffle(shuffle)
+    if confirmed_fallback:
+        h.playing()
+        await task
     before = s.queue.current_id
     expected = (
         before if repeat == "one" else s.queue.order[(s.queue.position + 1) % len(s.queue.order)]
@@ -511,9 +540,249 @@ async def test_new_strategies_snapshot_but_legacy_preferences_stay_live(make):
     assert h.session.round_id == 2 and not h.session.compatible
 
 
-def test_invalid_standard_estimation_is_rejected():
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback", "unknown"])
+def test_invalid_standard_estimation_is_rejected(policy):
     with pytest.raises(ValueError):
-        OutputProfile(unconfirmed_end="estimated_duration")
+        OutputProfile(unconfirmed_end=policy)
+
+
+@pytest.mark.parametrize("policy", ["manual", "estimated_duration", "duration_fallback"])
+@pytest.mark.parametrize("vendor", [False, True])
+async def test_playing_output_repeats_without_end_feedback(make, policy, vendor):
+    """One-item device loops must not reset the explicitly opted-in deadline."""
+    h = make(
+        profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy),
+        duration=30,
+    )
+    task = await h.begin()
+    h.byte()
+    h.clock.advance(1)
+    h.playing(vendor=vendor, position=1)
+    await task
+    await h.tick(28)
+    h.playing(vendor=vendor, position=29)
+    await h.tick(2)
+    h.playing(vendor=vendor, position=1)
+    h.session.stream_event(1, "get")
+    h.byte()
+    h.session.stream_event(1, "eof")
+    assert h.session.queue.position == 0
+    await h.tick(4)
+    assert h.session.queue.position == (1 if policy == "duration_fallback" else 0)
+    assert h.resolve.call_count == (2 if policy == "duration_fallback" else 1)
+
+
+@pytest.fixture
+def fallback(make):
+    return make(
+        profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end="duration_fallback"),
+        duration=30,
+    )
+
+
+async def confirmed(h):
+    task = await h.begin()
+    h.byte()
+    h.playing(position=0)
+    await task
+
+
+@pytest.mark.parametrize("local", [False, True])
+async def test_confirmed_fallback_freezes_pause_and_resumes_remaining_time(fallback, local):
+    h = fallback
+    await confirmed(h)
+    await h.tick(10)
+    if local:
+        await h.session.pause()
+        h.playing(position=10)  # Stale device state must not undo our Pause.
+    else:
+        h.output.report("paused", h.session._expected)
+    await h.tick(100)
+    assert h.session.timeline.estimated_elapsed() == 10
+    assert h.session._estimated_end is None
+    if local:
+        await h.session.start()
+    else:
+        h.playing(position=10)
+    await h.tick(24.999)
+    assert h.session.round_id == 1
+    await h.tick(0.001)
+    assert h.session.round_id == 2
+
+
+async def test_confirmed_fallback_recovers_from_buffering(fallback):
+    h = fallback
+    await confirmed(h)
+    await h.tick(10)
+    h.output.report("buffering", h.session._expected)
+    await h.tick(100)
+    h.session.stream_event(1, "eof")
+    assert h.session.timeline.estimated_elapsed() == 10
+    h.playing(position=10)
+    await h.tick(25)
+    assert h.session.round_id == 2
+
+
+@pytest.mark.parametrize("late", [False, True])
+async def test_fallback_confirmation_keeps_deadline_and_native_end_wins(fallback, late):
+    h = fallback
+    task = await h.begin()
+    h.byte()
+    if late:
+        await h.expire(task)
+    handle = h.session._estimated_end
+    h.playing(position=20 if late else 0)
+    await task
+    assert h.session._estimated_end is handle
+    h.clock.advance(handle.when() - h.clock.now)  # due queued, finish not run yet.
+    h.playing(position=30)
+    h.output.report("idle", h.session._expected)
+    await h.tick(0)
+    assert h.session.round_id == 2 and h.session.queue.position == 1
+    assert sum(e["event"] == "advance" for e in h.session.history) == 1
+    assert not any(e["reason"] == "estimated_end" for e in h.session.history)
+
+
+@pytest.mark.parametrize("target", [0, 25])
+@pytest.mark.parametrize("paused", [False, True])
+async def test_confirmed_fallback_rebases_only_acknowledged_local_seek(fallback, target, paused):
+    h = fallback
+    await confirmed(h)
+    await h.tick(10)
+    if paused:
+        await h.session.pause()  # Output still reports playing.
+    await h.session.seek(target)
+    assert h.session._estimated_end is None
+    h.playing(position=target)
+    assert h.session.timeline.estimated_elapsed() == target
+    if paused:
+        await h.tick(100)
+        assert h.session._estimated_end is None
+        await h.session.start()
+    await h.tick(35 - target - 0.001)
+    assert h.session.round_id == 1
+    await h.tick(0.001)
+    assert h.session.round_id == 2
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_fallback_unconfirmed_seek_restores_remaining_time(fallback, monkeypatch, fails):
+    h = fallback
+    await confirmed(h)
+    await h.tick(10)
+    if fails:
+
+        async def fail(service, data):
+            raise HomeAssistantError("synthetic seek failure")
+
+        h.output.hook = fail
+        with pytest.raises(HomeAssistantError):
+            await h.session.seek(25)
+        h.output.hook = None
+    else:
+        monkeypatch.setattr("custom_components.feiniu_music.session.SEEK_TIMEOUT", 0)
+        await h.session.seek(25)
+        await h.settle()
+    assert h.session.timeline.estimated_elapsed() == 10
+    await h.tick(25)
+    assert h.session.round_id == 2
+
+
+@pytest.mark.parametrize(
+    "features,command",
+    [(Feature.STOP, "media_stop"), (Feature.PAUSE, "media_pause"), (Feature(0), None)],
+)
+async def test_fallback_queue_tail_stops_its_owned_loop_when_supported(fallback, features, command):
+    h = fallback
+    h.session.queue.jump(h.session.queue.order[-1], h.session.queue.revision)
+    await confirmed(h)
+    h.output.features = Feature.PLAY_MEDIA | features
+    count = h.cancel.call_count
+    await h.tick(35)
+    assert h.session.phase == "ended" and not h.session.owned
+    assert h.cancel.call_count == count + 1
+    assert [c[0] for c in h.output.calls] == ["play_media"] + ([command] if command else [])
+    await h.tick(100)
+    assert h.session.round_id == 1
+
+
+async def test_fallback_late_confirmation_does_not_cancel_due_timer(fallback):
+    h = fallback
+    task = await h.begin()
+    h.byte()
+    await h.expire(task)
+    h.clock.advance(15)
+    h.playing(position=30)
+    await h.tick(0)
+    assert h.session.round_id == 2 and h.session.queue.position == 1
+
+
+@pytest.mark.parametrize("service", ["media_seek", "media_play"])
+async def test_fallback_pending_control_cannot_advance_even_after_early_feedback(fallback, service):
+    h = fallback
+    await confirmed(h)
+    await h.tick(10)
+    if service == "media_play":
+        await h.session.pause()
+    gate = asyncio.get_running_loop().create_future()
+
+    async def pending(command, data):
+        if command == service:
+            h.playing(position=25 if service == "media_seek" else 10)
+            await gate
+
+    h.output.hook = pending
+    operation = asyncio.create_task(
+        h.session.seek(25) if service == "media_seek" else h.session.start()
+    )
+    await h.settle()
+    try:
+        await h.tick(100)
+        assert h.session.round_id == 1 and h.session._estimated_end is None
+        assert h.session.timeline.estimated_elapsed() == (25 if service == "media_seek" else 10)
+        gate.set_result(None)
+        await operation
+        await h.tick(10 if service == "media_seek" else 25)
+        assert h.session.round_id == 2
+    finally:
+        if not gate.done():
+            gate.set_result(None)
+        await operation
+
+
+async def test_fallback_pause_wins_after_timer_due_before_finish(fallback):
+    h = fallback
+    await confirmed(h)
+    h.clock.advance(35)
+    await h.session.pause()
+    await h.tick(0)
+    assert h.session.round_id == 1 and h.session._estimated_end is None
+
+
+async def test_fallback_setting_change_only_applies_next_round(fallback):
+    h = fallback
+    await confirmed(h)
+    h.session.profile = replace(h.session.profile, unconfirmed_end="manual")
+    await h.tick(35)
+    assert h.session.round_id == 2
+    h.byte()
+    h.playing()
+    await h.tick(100)
+    assert h.session.round_id == 2 and h.session.unconfirmed_end == "manual"
+
+
+async def test_fallback_queue_tail_stop_failure_is_reported(fallback):
+    h = fallback
+    h.session.queue.jump(h.session.queue.order[-1], h.session.queue.revision)
+    await confirmed(h)
+
+    async def fail(command, data):
+        raise HomeAssistantError("synthetic failure")
+
+    h.output.hook = fail
+    await h.tick(35)
+    assert h.session.phase == "failed" and h.session.reason == "stop_unconfirmed"
+    assert not h.session.owned and h.session._estimated_end is None
 
 
 @pytest.mark.parametrize("stage", ["awaiting", "assumed", "confirmed"])

@@ -57,8 +57,8 @@ class OutputProfile:
             raise ValueError("Invalid compatibility flags")
         if self.feedback_mode not in {"standard", "compatibility"}:
             raise ValueError("Invalid playback feedback mode")
-        if self.unconfirmed_end not in {"manual", "estimated_duration"}:
-            raise ValueError("Invalid unconfirmed continuation policy")
+        if self.unconfirmed_end not in {"manual", "estimated_duration", "duration_fallback"}:
+            raise ValueError("Invalid continuation policy")
         if self.feedback_mode == "standard" and self.unconfirmed_end != "manual":
             raise ValueError("Estimated continuation requires compatibility mode")
 
@@ -120,6 +120,7 @@ class PlaybackSession:
         self._before_state: State | None = None
         self._local_resume = False
         self._resume_pending = False
+        self._seek_command_pending = False
         self._estimate_buffering = False
         self._estimated_end: asyncio.TimerHandle | asyncio.Handle | None = None
         self._estimate_token: object | None = None
@@ -153,6 +154,11 @@ class PlaybackSession:
         return self.feedback_mode == "compatibility"
 
     @property
+    def duration_fallback(self) -> bool:
+        """An explicit opt-in; confirmation alone does not disable this deadline."""
+        return self.compatible and self.unconfirmed_end == "duration_fallback"
+
+    @property
     def position_visible(self) -> bool:
         return self.started or (
             self.compatible and self.owned and self.confirmation_stage == "assumed"
@@ -168,16 +174,22 @@ class PlaybackSession:
     def _estimate_blocked(self) -> str | None:
         if not self.owned or self.closed:
             return "lost_owner"
-        if not self.compatible or self.unconfirmed_end != "estimated_duration":
+        if not self.compatible or self.unconfirmed_end == "manual":
             return "disabled"
-        if self.confirmation_stage == "confirmed":
+        if self.confirmation_stage == "confirmed" and not self.duration_fallback:
             return "confirmed"
-        if self.confirmation_stage not in {"awaiting", "assumed"}:
+        if self.confirmation_stage not in {"awaiting", "assumed", "confirmed"}:
             return "inactive"
-        if self.intent == "seek" or self.timeline.seek_target is not None:
+        if (
+            self.intent == "seek"
+            or self.timeline.seek_target is not None
+            or self._seek_command_pending
+        ):
             return "seek_pending"
         if self.intent != "play":
             return "paused" if self.intent == "pause" else "inactive"
+        if self.duration_fallback and self.phase == "paused":
+            return "paused"
         if self._resume_pending:
             return "resume_pending"
         if self._estimate_buffering:
@@ -198,12 +210,18 @@ class PlaybackSession:
             return
         if self._command_return is not None and self._first_byte is not None:
             self.timeline.start_estimate(max(self._command_return, self._first_byte))
-            if self.intent != "play" or self._estimate_buffering or self._resume_pending:
+            if (
+                self.intent != "play"
+                or self._estimate_buffering
+                or self._resume_pending
+                or self._seek_command_pending
+                or (self.duration_fallback and self.phase == "paused")
+            ):
                 self.timeline.freeze_estimate()
         blocked = self._estimate_blocked()
         if blocked != self.estimated_end_blocked_reason:
             self.estimated_end_blocked_reason = blocked
-            if blocked is not None and self.unconfirmed_end == "estimated_duration":
+            if blocked is not None and self.unconfirmed_end != "manual":
                 self.record("estimated_end_blocked", blocked)
         if blocked is not None:
             self._cancel_estimated(blocked)
@@ -311,6 +329,7 @@ class PlaybackSession:
     def _invalidate(self, intent: str) -> int:
         self._cancel_estimated(intent)
         self._resume_pending = False
+        self._seek_command_pending = False
         if intent in {"stop", "unload", "detach", "failure"}:
             self._estimate_buffering = False
         self.generation += 1
@@ -704,6 +723,7 @@ class PlaybackSession:
             self._raw_samples += 1
         if self.intent == "seek" and self.timeline.seek_target is None:
             self.intent = self._seek_return_intent
+            self._sync_seek_estimate(accepted=True)
             if self._seek:
                 self._seek.cancel()
                 self._seek = None
@@ -717,8 +737,11 @@ class PlaybackSession:
                 self.confirmation_stage = "confirmed"
                 self._local_resume = False
                 self._estimate_buffering = False
-                self._cancel_estimated("confirmed")
-                self.estimated_end_blocked_reason = "confirmed"
+                if not self.duration_fallback:
+                    self._cancel_estimated("confirmed")
+                    self.estimated_end_blocked_reason = "confirmed"
+                elif not self._resume_pending:
+                    self.timeline.resume_estimate()
                 self.started = True
                 self.phase, self.reason = "playing", "output_reported_playing"
                 if late:
@@ -797,6 +820,19 @@ class PlaybackSession:
             return
         self.record("advance", "automatic")
         if self.queue.advance(natural=True) is None:
+            if self.duration_fallback and self.reason == "estimated_end":
+                # The device may still be looping its one-item list. Stop only our
+                # current owned round, using public HA capabilities, at queue end.
+                self.cancel_streams()
+                service = "media_stop" if self.output.features & Feature.STOP else "media_pause"
+                if self.output.features & (Feature.STOP | Feature.PAUSE):
+                    try:
+                        await self._send(generation, service)
+                    except HomeAssistantError:
+                        if self._valid(generation):
+                            self._fail("stop_unconfirmed")
+                        return
+                self._check(generation)
             self.phase, self.reason = "ended", "queue_ended"
             self.record("end", "queue_ended")
             self.timeline.freeze("queue_ended")
@@ -890,17 +926,28 @@ class PlaybackSession:
         self._seek_return_intent = (
             "pause" if self.output.state and self.output.state.state == "paused" else "play"
         )
+        if self.duration_fallback and (self.intent == "pause" or self.phase == "paused"):
+            self._seek_return_intent = "pause"
         self.timeline.request_seek(position)
+        if self.duration_fallback:
+            self.timeline.freeze_estimate()
         generation = self._invalidate("seek")
+        self._seek_command_pending = self.duration_fallback
         try:
             await self._send(generation, "media_seek", {"seek_position": position})
         except HomeAssistantError:
+            if self.duration_fallback:
+                self._check(generation)
+                self._seek_command_pending = False
             self.timeline.reject_seek()
             self.intent = self._seek_return_intent
+            self._sync_seek_estimate(accepted=False)
             self.changed()
             raise
+        self._seek_command_pending = False
         if self.timeline.seek_target is None:
             self.intent = self._seek_return_intent
+            self._sync_seek_estimate(accepted=False)
         else:
 
             async def expire() -> None:
@@ -908,12 +955,24 @@ class PlaybackSession:
                 if self._valid(generation):
                     self.timeline.reject_seek()
                     self.intent = self._seek_return_intent
+                    self._sync_seek_estimate(accepted=False)
                     self.changed()
 
             self._seek = self.hass.async_create_background_task(
                 expire(), "FeiNiu seek confirmation"
             )
         self.changed()
+
+    def _sync_seek_estimate(self, *, accepted: bool) -> None:
+        """Only a locally requested, acknowledged seek can rebase the fallback clock."""
+        if not self.duration_fallback:
+            return
+        position = self.timeline.position()
+        if accepted and position is not None:
+            self.timeline.seek_estimate(position)
+        if self.intent == "play" and not self._estimate_buffering and not self._resume_pending:
+            self.timeline.resume_estimate()
+        self._sync_estimated()
 
     async def close(self) -> None:
         if self.closed:

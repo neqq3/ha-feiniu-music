@@ -30,6 +30,30 @@ layouts, touch controls, search, lyrics, and the visual editor using synthetic H
 It also runs the browse lifecycle checks with `CARD_BROWSER_ENGINE=webkit`, using
 touch/mobile emulation. This is not a physical iPhone or HA Companion WebView test.
 
+## Persistent duration fallback
+
+The compatibility continuation selector now also offers `duration_fallback`.
+Standard/manual and `estimated_duration` retain their existing behavior. The new
+choice is per output, takes effect next round, and keeps duration + 5-second
+estimation after startup confirmation. No device-brand detection is used.
+
+Controlled-clock regressions reproduce a continuously playing output whose raw
+position wraps to the start and whose stream is fetched again. Only the new
+opt-in advances the queue. They also cover pause/resume and buffering, early/late
+confirmation, acknowledged forward/backward seeks, failed or pending controls,
+same-turn timer/end/intent races, takeover, queue repeat/shuffle and stopping a
+looping output at the end of a non-repeating queue when supported. Native position
+wraps do not reset the fallback clock; external seeks without a FeiNiu request
+cannot be reliably distinguished from device looping.
+
+The local controlled suites (feedback compatibility/options/storage and timeline)
+pass 293 tests on HA 2026.9.4 / Python 3.14. These run without the full HA pytest
+plugin on Windows; they are not a substitute for the Linux integration matrix.
+The card passes 9 unit tests, Chromium and WebKit checks, including bilingual
+three-choice settings and reopening/saving the new choice. Native HA options and
+WebSocket persistence cases are included in the existing CI suite. There is no
+new real-speaker acceptance result for this strategy yet.
+
 ## Playback feedback compatibility — 2026-10-05
 
 Implementation baseline: `6b8de85`. The reviewed production code is in `d1dae85`;

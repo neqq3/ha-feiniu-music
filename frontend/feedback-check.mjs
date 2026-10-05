@@ -9,7 +9,7 @@ export async function checkFeedback(browser,url){
   await page.goto(url);
   const card=page.locator('feiniu-music-card').first();
   await card.locator('.tile').first().waitFor();
-  for(const language of ['zh-Hans','en']){
+  for(const language of ['zh-Hans','en'])for(const policy of ['estimated_duration','duration_fallback']){
    await page.evaluate(language=>{hass.language=language;document.querySelector('feiniu-music-card').hass=hass;},language);
    await card.getByRole('button',{name:language==='en'?'Playback feedback and continuation':'播放反馈与续播',exact:true}).click();
    assert.equal(await card.locator('#feedback-mode').inputValue(),'standard');
@@ -17,10 +17,12 @@ export async function checkFeedback(browser,url){
    assert.match(await card.locator('#confirmation').textContent(),language==='en'?/Playing report plus audio delivery/:/播放中反馈，并有音频传输/);
    await card.locator('#feedback-mode').selectOption('compatibility');
    assert.equal(await card.locator('#estimated-end').isVisible(),true);
-   assert.equal(await card.locator('#estimated-end').isChecked(),false);
-   await card.locator('#estimated-end').check();
+   assert.equal(await card.locator('#estimated-end').inputValue(),'manual');
+   assert.equal(await card.locator('#estimated-end option').count(),3);
+   assert.match(await card.locator('#estimated-end').textContent(),language==='en'?/Keep duration fallback after confirmation/:/始终保留时长兜底/);
+   await card.locator('#estimated-end').selectOption(policy);
    await card.locator('#save-preferences button').click();
-   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),{feedback_mode:'compatibility',unconfirmed_end:'estimated_duration'});
+   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),{feedback_mode:'compatibility',unconfirmed_end:policy});
   }
   await page.evaluate(()=>{
    const c=document.querySelector('feiniu-music-card');
@@ -44,14 +46,18 @@ export async function checkFeedback(browser,url){
   assert.equal(await card.locator('#seek').isDisabled(),false);
   assert.equal(await card.locator('.lyric-seek').first().isDisabled(),false);
   assert.match(await card.locator('#compact-status').textContent(),/已收到本轮播放反馈/);
-  await page.evaluate(()=>{const a=hass.states['media_player.feiniu_a'].attributes;a.playback_profile={feedback_mode:'compatibility',unconfirmed_end:'estimated_duration'};document.querySelector('feiniu-music-card').hass=hass;});
+  await page.evaluate(()=>{const a=hass.states['media_player.feiniu_a'].attributes;a.playback_profile={feedback_mode:'compatibility',unconfirmed_end:'duration_fallback'};document.querySelector('feiniu-music-card').hass=hass;});
   // Open the existing settings dialog through the actual compact expand interface.
+  await page.evaluate(()=>document.querySelector('feiniu-music-card')._preferences());
+  assert.equal(await card.locator('#estimated-end').inputValue(),'duration_fallback');
+  await card.locator('#save-preferences button').click();
+  assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),undefined);
   await page.evaluate(()=>document.querySelector('feiniu-music-card')._preferences());
   await card.locator('#feedback-mode').selectOption('standard');
   assert.equal(await card.locator('#estimated-end').isVisible(),false);
   await card.locator('#save-preferences button').click();
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),{feedback_mode:'standard',unconfirmed_end:'manual'});
   assert.deepEqual(errors,[]);
-  console.log('Feedback DOM checks passed: bilingual settings, conditional estimate opt-in, truthful statuses, seek/lyric gating and late confirmation at 390/1280px.');
+  console.log('Feedback DOM checks passed: bilingual three-policy settings and round-trip save, conditional estimate opt-in, truthful statuses, seek/lyric gating and late confirmation at 390/1280px.');
  }finally{await page.close();}
 }

@@ -67,8 +67,8 @@ async def test_second_step_baseline_is_the_value_shown_on_entering_that_step(opt
     first = await flow.async_step_playback_profile()
     player.set_playback_profile({"unconfirmed_end": "estimated_duration"})
     second = await flow.async_step_playback_profile(first["data_schema"]({}))
-    assert second["data_schema"]({}) == {"estimated": True}
-    result = await flow.async_step_unconfirmed_end({"estimated": False})
+    assert second["data_schema"]({}) == {"unconfirmed_end": "estimated_duration"}
+    result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "manual"})
     assert result["type"] == "create_entry"
     assert player.control.profile.unconfirmed_end == "manual"
 
@@ -83,7 +83,7 @@ async def test_explicit_first_step_mode_edit_is_pending_until_second_step_save(o
     assert second["step_id"] == "unconfirmed_end"
     assert player.control.profile == original  # Abandoning this form writes nothing.
     storage.flush.assert_not_awaited()
-    result = await flow.async_step_unconfirmed_end({"estimated": True})
+    result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "estimated_duration"})
     assert result["type"] == "create_entry"
     assert player.control.profile == OutputProfile(
         feedback_mode="compatibility", unconfirmed_end="estimated_duration", play_once=True
@@ -102,9 +102,9 @@ async def test_second_step_conflict_requires_reopening_without_partial_save(opti
         {"end_state": "off"} if conflict == "same_field" else {"feedback_mode": "standard"}
     )
     expected = player.control.profile
-    result = await flow.async_step_unconfirmed_end({"estimated": True})
+    result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "estimated_duration"})
     assert result["type"] == "form" and result["errors"] == {"base": "profile_changed"}
-    assert result["data_schema"]({}) == {"estimated": True}
+    assert result["data_schema"]({}) == {"unconfirmed_end": "estimated_duration"}
     assert player.control.profile == expected
     storage.flush.assert_not_awaited()
 
@@ -115,8 +115,38 @@ async def test_second_step_same_concurrent_value_is_not_a_conflict(options):
     first = await flow.async_step_playback_profile()
     await flow.async_step_playback_profile({**first["data_schema"]({}), "end_state": "off"})
     player.set_playback_profile({"end_state": "off", "unconfirmed_end": "estimated_duration"})
-    result = await flow.async_step_unconfirmed_end({"estimated": True})
+    result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "estimated_duration"})
     assert result["type"] == "create_entry"
     assert player.control.profile.end_state == "off"
     assert player.control.profile.unconfirmed_end == "estimated_duration"
     storage.flush.assert_awaited_once()
+
+
+@pytest.mark.parametrize("policy", ["manual", "estimated_duration", "duration_fallback"])
+async def test_all_continuation_choices_round_trip_without_playback(options, policy):
+    flow, player, storage = options
+    first = await flow.async_step_playback_profile()
+    second = await flow.async_step_playback_profile(
+        {**first["data_schema"]({}), "feedback_mode": "compatibility"}
+    )
+    selection = second["data_schema"]({"unconfirmed_end": policy})
+    assert (await flow.async_step_unconfirmed_end(selection))["type"] == "create_entry"
+    assert player.control.profile.unconfirmed_end == policy
+    await flow.async_step_playback_profile()
+    second = await flow.async_step_playback_profile(
+        first["data_schema"]({"feedback_mode": "compatibility"})
+    )
+    assert second["data_schema"]({})["unconfirmed_end"] == policy
+    storage.flush.assert_awaited_once()
+
+
+async def test_conflicting_continuation_choices_do_not_overwrite_each_other(options):
+    flow, player, storage = options
+    player.set_playback_profile({"feedback_mode": "compatibility"})
+    first = await flow.async_step_playback_profile()
+    await flow.async_step_playback_profile(first["data_schema"]({}))
+    player.set_playback_profile({"unconfirmed_end": "estimated_duration"})
+    result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "duration_fallback"})
+    assert result["errors"] == {"base": "profile_changed"}
+    assert player.control.profile.unconfirmed_end == "estimated_duration"
+    storage.flush.assert_not_awaited()

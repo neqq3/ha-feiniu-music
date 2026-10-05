@@ -97,9 +97,9 @@
       },
       "unconfirmed_end": {
         "title": "Playback feedback and continuation",
-        "description": "Off by default. Requires a successful play request, first-byte delivery for this round and a valid duration. The monotonic clock starts at the later of command return and first-byte delivery; continuation waits the track duration plus 5 seconds. Delayed starts, buffering, inaccurate durations or unreported external pauses may cause early or late changes. Delivery is not proof of sound. Takes effect on the next playback round.",
+        "description": "Defaults to device end feedback. Unconfirmed-only estimation cancels on confirmation; persistent fallback keeps the deadline even after confirmation for outputs missing end feedback. Requires a successful play request, first-byte delivery for this round and a valid duration. Starts at the later of command return and delivery, then waits duration plus 5 seconds. Pause/buffering freezes the clock; acknowledged seeks through FeiNiu recalculate it. Delayed starts, inaccurate durations or unreported external controls can cause early or late changes. Delivery does not prove sound. Takes effect next round.",
         "data": {
-          "estimated": "Advance by estimated duration when playback is unconfirmed"
+          "unconfirmed_end": "Continuation strategy"
         }
       }
     },
@@ -150,6 +150,13 @@
       "options": {
         "standard": "Standard (default)",
         "compatibility": "Compatibility: keep the session when unconfirmed"
+      }
+    },
+    "unconfirmed_end": {
+      "options": {
+        "manual": "Wait for device end feedback (default)",
+        "estimated_duration": "Duration fallback only while unconfirmed",
+        "duration_fallback": "Keep duration fallback after confirmation"
       }
     }
   },

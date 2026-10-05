@@ -178,7 +178,9 @@ async def get_lyrics(
         vol.Optional("lyric_offset"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=30)),
         vol.Optional("profile"): {
             vol.Optional("feedback_mode"): vol.In(["standard", "compatibility"]),
-            vol.Optional("unconfirmed_end"): vol.In(["manual", "estimated_duration"]),
+            vol.Optional("unconfirmed_end"): vol.In(
+                ["manual", "estimated_duration", "duration_fallback"]
+            ),
             vol.Optional("confirmation"): vol.In(["delivery", "reported"]),
             vol.Optional("play_once"): bool,
             vol.Optional("end_state"): vol.In(["idle", "paused", "off"]),

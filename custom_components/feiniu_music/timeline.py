@@ -97,6 +97,11 @@ class Timeline:
         if self._estimate_started and self._estimate_since is None:
             self._estimate_since = self.clock()
 
+    def seek_estimate(self, position: float) -> None:
+        """Rebase after acknowledged explicit seeking, never an unsolicited device wrap."""
+        self._estimate_elapsed = self._clamp(position)
+        self._estimate_since = None
+
     def show_estimate(self, *, moving: bool) -> None:
         self._set(self.estimated_elapsed(), "playing" if moving else "paused", "estimated")
         self.state = "playing" if moving else "paused"
