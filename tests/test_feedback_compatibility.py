@@ -284,8 +284,14 @@ async def test_compatible_resume_never_reloads_even_after_late_confirmation(
 
 
 @pytest.mark.parametrize("first_byte_before", [False, True])
-async def test_estimate_zero_later_of_command_and_delivery_and_exact_grace(make, first_byte_before):
-    h = make(estimated=True, duration=10)
+@pytest.mark.parametrize("policy,grace", [("estimated_duration", 5), ("duration_fallback", 0)])
+async def test_estimate_zero_later_of_command_and_delivery_and_exact_grace(
+    make, first_byte_before, policy, grace
+):
+    h = make(
+        profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy),
+        duration=10,
+    )
     gate = asyncio.get_running_loop().create_future()
 
     async def command(service, data):
@@ -302,12 +308,10 @@ async def test_estimate_zero_later_of_command_and_delivery_and_exact_grace(make,
     if not first_byte_before:
         h.clock.advance(7)
         h.byte()
-    assert h.session._estimated_end.when() == 122
+    assert h.session._estimated_end.when() == 117 + grace
     for event in ("eof", "get", "eof", "first_byte", "eof"):
         h.session.stream_event(1, event)
-    await h.tick(10)
-    assert h.session.round_id == 1
-    await h.tick(4.999)
+    await h.tick(9.999 + grace)
     assert h.session.round_id == 1
     await h.tick(0.001)
     assert h.session.round_id == 2 and h.session.queue.position == 1
@@ -514,7 +518,9 @@ async def test_estimated_end_uses_current_queue_order_once(
     expected = (
         before if repeat == "one" else s.queue.order[(s.queue.position + 1) % len(s.queue.order)]
     )
-    await h.tick(15)
+    await h.tick(9.999 if confirmed_fallback else 14.999)
+    assert s.round_id == 1
+    await h.tick(0.001)
     await task
     assert s.round_id == 2 and s.queue.current_id == expected
 
@@ -561,13 +567,15 @@ async def test_playing_output_repeats_without_end_feedback(make, policy, vendor)
     await task
     await h.tick(28)
     h.playing(vendor=vendor, position=29)
-    await h.tick(2)
-    h.playing(vendor=vendor, position=1)
+    await h.tick(0.5)
+    h.playing(vendor=vendor, position=0.5)
     h.session.stream_event(1, "get")
     h.byte()
     h.session.stream_event(1, "eof")
     assert h.session.queue.position == 0
-    await h.tick(4)
+    await h.tick(0.499)
+    assert h.session.queue.position == 0
+    await h.tick(0.001)
     assert h.session.queue.position == (1 if policy == "duration_fallback" else 0)
     assert h.resolve.call_count == (2 if policy == "duration_fallback" else 1)
 
@@ -604,7 +612,7 @@ async def test_confirmed_fallback_freezes_pause_and_resumes_remaining_time(fallb
         await h.session.start()
     else:
         h.playing(position=10)
-    await h.tick(24.999)
+    await h.tick(19.999)
     assert h.session.round_id == 1
     await h.tick(0.001)
     assert h.session.round_id == 2
@@ -619,7 +627,7 @@ async def test_confirmed_fallback_recovers_from_buffering(fallback):
     h.session.stream_event(1, "eof")
     assert h.session.timeline.estimated_elapsed() == 10
     h.playing(position=10)
-    await h.tick(25)
+    await h.tick(20)
     assert h.session.round_id == 2
 
 
@@ -659,7 +667,7 @@ async def test_confirmed_fallback_rebases_only_acknowledged_local_seek(fallback,
         await h.tick(100)
         assert h.session._estimated_end is None
         await h.session.start()
-    await h.tick(35 - target - 0.001)
+    await h.tick(30 - target - 0.001)
     assert h.session.round_id == 1
     await h.tick(0.001)
     assert h.session.round_id == 2
@@ -684,7 +692,7 @@ async def test_fallback_unconfirmed_seek_restores_remaining_time(fallback, monke
         await h.session.seek(25)
         await h.settle()
     assert h.session.timeline.estimated_elapsed() == 10
-    await h.tick(25)
+    await h.tick(20)
     assert h.session.round_id == 2
 
 
@@ -698,7 +706,7 @@ async def test_fallback_queue_tail_stops_its_owned_loop_when_supported(fallback,
     await confirmed(h)
     h.output.features = Feature.PLAY_MEDIA | features
     count = h.cancel.call_count
-    await h.tick(35)
+    await h.tick(30)
     assert h.session.phase == "ended" and not h.session.owned
     assert h.cancel.call_count == count + 1
     assert [c[0] for c in h.output.calls] == ["play_media"] + ([command] if command else [])
@@ -711,7 +719,7 @@ async def test_fallback_late_confirmation_does_not_cancel_due_timer(fallback):
     task = await h.begin()
     h.byte()
     await h.expire(task)
-    h.clock.advance(15)
+    h.clock.advance(10)
     h.playing(position=30)
     await h.tick(0)
     assert h.session.round_id == 2 and h.session.queue.position == 1
@@ -742,7 +750,7 @@ async def test_fallback_pending_control_cannot_advance_even_after_early_feedback
         assert h.session.timeline.estimated_elapsed() == (25 if service == "media_seek" else 10)
         gate.set_result(None)
         await operation
-        await h.tick(10 if service == "media_seek" else 25)
+        await h.tick(5 if service == "media_seek" else 20)
         assert h.session.round_id == 2
     finally:
         if not gate.done():
@@ -753,7 +761,7 @@ async def test_fallback_pending_control_cannot_advance_even_after_early_feedback
 async def test_fallback_pause_wins_after_timer_due_before_finish(fallback):
     h = fallback
     await confirmed(h)
-    h.clock.advance(35)
+    h.clock.advance(30)
     await h.session.pause()
     await h.tick(0)
     assert h.session.round_id == 1 and h.session._estimated_end is None
@@ -763,7 +771,7 @@ async def test_fallback_setting_change_only_applies_next_round(fallback):
     h = fallback
     await confirmed(h)
     h.session.profile = replace(h.session.profile, unconfirmed_end="manual")
-    await h.tick(35)
+    await h.tick(30)
     assert h.session.round_id == 2
     h.byte()
     h.playing()
@@ -780,7 +788,7 @@ async def test_fallback_queue_tail_stop_failure_is_reported(fallback):
         raise HomeAssistantError("synthetic failure")
 
     h.output.hook = fail
-    await h.tick(35)
+    await h.tick(30)
     assert h.session.phase == "failed" and h.session.reason == "stop_unconfirmed"
     assert not h.session.owned and h.session._estimated_end is None
 

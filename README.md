@@ -181,11 +181,11 @@ cards:
 | 未确认播放时，按时长兜底 | 起播反馈缺失；确认起播后取消计时，保留原有行为 |
 | 始终保留时长兜底 | 能报告播放中，却不报告结束，或反复播放收到的单首歌曲；确认起播后仍保留计时 |
 
-两种时长兜底都需要播放请求成功返回、本轮首次音频交付和有效时长，以请求返回和首次交付中较晚的时间开始，等待**歌曲时长 + 5 秒**。只有 HEAD、GET 或传输 EOF 不会触发切歌，整首提前缓存完也不会直接跳过。
+两种时长兜底都需要播放请求成功返回、本轮首次音频交付和有效时长，以请求返回和首次交付中较晚的时间开始计时。“始终保留”在**歌曲时长到达时切歌，额外等待 0 秒**；“未确认时”仍等待**歌曲时长 + 5 秒**。只有 HEAD、GET 或传输 EOF 不会触发切歌，整首提前缓存完也不会直接跳过。
 
 “始终保留”中，通过飞牛暂停或收到已确认输出的暂停／缓冲反馈会冻结计时，恢复后继续剩余时间；通过飞牛跳转且收到有效进度确认后，重新计算剩余时间。设备自行把进度跳回开头不会重置计时。可信结束反馈和估算到期只会推进一次队列，停止、手动切歌或检测到外部接管都会取消旧计时。最后一首估算结束且循环关闭时，飞牛撤销音频流，并在输出支持时发送停止或暂停；没有这两项能力的设备可能继续播放已缓存音频。
 
-估算不能保证音箱真正播完：启动延迟、缓冲、时长误差，或没有上报的外部 App／音箱按键暂停，都可能让切歌提前或延后。5 秒只是余量，不是可靠的缓冲上界；`first_byte` 也不证明已经发声。没有媒体标识或来源变化时，外部接管无法可靠识别。
+估算不能保证音箱真正播完：启动延迟、缓冲、时长误差，或没有上报的外部 App／音箱按键暂停，都可能让切歌提前或延后。“未确认时”的 5 秒只是余量，不是可靠的缓冲上界；`first_byte` 也不证明已经发声。没有媒体标识或来源变化时，外部接管无法可靠识别。
 
 **兼容模式中的 HA `playing` 可能只是飞牛估计正在播放。** `confirmation_stage` 表示当前或最近一轮的确认历史，不能单独判断现在仍在播放。自动化若需要判断当前处于已确认播放，至少应同时检查 `confirmation_stage == confirmed`、`queue_active == true` 和 HA 当前状态为 `playing`。这些软件状态仍不能证明音箱实际发声，也不保证之后每个反馈都可靠。卡片同时显示估算进度或“已请求暂停 · 设备状态未确认”。
 
@@ -262,11 +262,11 @@ Compatibility offers three **continuation strategies** in both integration optio
 | Duration fallback only while unconfirmed | Preserves the existing behavior: confirmation cancels estimation for that round |
 | Keep duration fallback after confirmation | Keeps the deadline for outputs that report playing but omit end feedback or loop the supplied track |
 
-Both duration options require successful command return, first-byte delivery for the current round and a finite positive duration. The monotonic clock starts at the later of command return and delivery, then waits **duration + 5 seconds**. HEAD, GET, EOF and early whole-file caching never directly mean playback has finished.
+Both duration options require successful command return, first-byte delivery for the current round and a finite positive duration. The monotonic clock starts at the later of command return and delivery. Persistent fallback advances at **duration, with 0 seconds of extra delay**; unconfirmed-only estimation still waits **duration + 5 seconds**. HEAD, GET, EOF and early whole-file caching never directly mean playback has finished.
 
 Persistent fallback freezes on FeiNiu Pause or a confirmed output's pause/buffering report, and resumes with the remaining time. A seek through FeiNiu recalculates it only after valid position feedback. Unsolicited device position wraps do not restart the clock. Valid end feedback and deadline expiry advance the queue only once; Stop, manual track changes and detected takeover cancel the old deadline. At the end of a non-repeating queue, estimated completion revokes the stream and sends Stop or Pause when supported; devices without either capability may keep playing buffered audio.
 
-Delayed starts, buffering, inaccurate durations and unreported external pauses may still cause early or late changes. The 5-second grace is not a reliable buffering bound; `first_byte` is not audible proof. Unknown media identity limits attribution, and takeover without observable identity/source changes cannot reliably be detected. **HA `playing` can be an assumed state in compatibility mode.** `confirmation_stage` records the confirmation history of the current or most recent round; it cannot establish that playback is still active. Automations checking for current confirmed playback should at least combine `confirmation_stage == confirmed`, `queue_active == true`, and an HA state of `playing`. These software states do not prove audible playback or guarantee that later reports are reliable.
+Delayed starts, buffering, inaccurate durations and unreported external pauses may still cause early or late changes. The unconfirmed-only 5-second grace is not a reliable buffering bound; `first_byte` is not audible proof. Unknown media identity limits attribution, and takeover without observable identity/source changes cannot reliably be detected. **HA `playing` can be an assumed state in compatibility mode.** `confirmation_stage` records the confirmation history of the current or most recent round; it cannot establish that playback is still active. Automations checking for current confirmed playback should at least combine `confirmation_stage == confirmed`, `queue_active == true`, and an HA state of `playing`. These software states do not prove audible playback or guarantee that later reports are reliable.
 
 Feedback mode and estimated continuation take effect on the **next playback round**. The four existing preferences keep immediate-update behavior. Candidate end-state/weak-end options apply only after confirmed playback and can mistake manual pause/stop for completion; they do not enable estimated continuation. Extra Play is sent at most once while unconfirmed, with matched media and PLAY support.
 

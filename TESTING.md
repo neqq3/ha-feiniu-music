@@ -34,8 +34,11 @@ touch/mobile emulation. This is not a physical iPhone or HA Companion WebView te
 
 The compatibility continuation selector now also offers `duration_fallback`.
 Standard/manual and `estimated_duration` retain their existing behavior. The new
-choice is per output, takes effect next round, and keeps duration + 5-second
-estimation after startup confirmation. No device-brand detection is used.
+choice is per output, takes effect next round, and keeps duration-based
+estimation after startup confirmation, with zero extra delay. Boundary tests
+assert no advance before the duration and exactly one advance when it elapses;
+unconfirmed-only estimation retains its 5-second grace. No device-brand detection
+is used.
 
 Controlled-clock regressions reproduce a continuously playing output whose raw
 position wraps to the start and whose stream is fetched again. Only the new
@@ -47,7 +50,7 @@ wraps do not reset the fallback clock; external seeks without a FeiNiu request
 cannot be reliably distinguished from device looping.
 
 The local controlled suites (feedback compatibility/options/storage and timeline)
-pass 293 tests on HA 2026.9.4 / Python 3.14. These run without the full HA pytest
+pass 295 tests on HA 2026.9.4 / Python 3.14. These run without the full HA pytest
 plugin on Windows; they are not a substitute for the Linux integration matrix.
 The card passes 9 unit tests, Chromium and WebKit checks, including bilingual
 three-choice settings and reopening/saving the new choice. Native HA options and

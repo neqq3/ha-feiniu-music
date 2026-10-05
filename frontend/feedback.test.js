@@ -30,4 +30,6 @@ test('native language keys match and confirmation help retains AND semantics',as
  assert.match(zh.options.step.playback_profile.data_description.confirmation,/关联检查和输出报告/);
  assert.match(en.options.step.unconfirmed_end.description,/5 seconds/);
  assert.match(zh.options.step.unconfirmed_end.description,/5 秒/);
+ assert.match(en.options.step.unconfirmed_end.description,/0 seconds/);
+ assert.match(zh.options.step.unconfirmed_end.description,/额外等待 0 秒/);
 });

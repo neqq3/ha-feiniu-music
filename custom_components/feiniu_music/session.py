@@ -258,9 +258,12 @@ class PlaybackSession:
                 self._cancel_estimated(self._estimate_blocked() or "stale_round")
 
         assert self.timeline.duration is not None
-        remaining = self.timeline.duration + ESTIMATED_END_GRACE - self.timeline.estimated_elapsed()
+        grace = 0.0 if self.duration_fallback else ESTIMATED_END_GRACE
+        remaining = self.timeline.duration + grace - self.timeline.estimated_elapsed()
         self._estimated_end = self.hass.loop.call_later(max(0, remaining), due)
-        self.record("estimated_end_armed", "duration_plus_grace")
+        self.record(
+            "estimated_end_armed", "duration" if self.duration_fallback else "duration_plus_grace"
+        )
 
     def _finish_round_once(self, reason: str) -> None:
         if self._ended_round == self.round_id:
