@@ -356,7 +356,7 @@ async def test_diagnostics_contains_only_bounded_operational_context(hass, insta
     await play(hass, player, entry)
     result = await async_get_config_entry_diagnostics(hass, entry)
     encoded = json.dumps(result)
-    assert result["integration_version"] == "1.0.1"
+    assert result["integration_version"] == "1.1.0-beta.1"
     assert result["ha_version"] == HA_VERSION
     assert len(result["sessions"]) == 2
     assert result["sessions"][0]["session"]["phase"] == "playing"
