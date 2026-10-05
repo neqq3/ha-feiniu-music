@@ -232,6 +232,7 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
         self._output_key: str | None = None
         self._profile_defaults: dict[str, Any] = {}
         self._profile_pending: dict[str, Any] = {}
+        self._unconfirmed_default = "manual"
 
     def _manager(self) -> AccountPlayers | None:
         manager = self.hass.data.get(DOMAIN, {}).get("players", {}).get(self.config_entry.entry_id)
@@ -368,19 +369,31 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
-                player.set_playback_profile(
-                    {
-                        **self._profile_pending,
-                        "feedback_mode": "compatibility",
-                        "unconfirmed_end": "estimated_duration"
-                        if user_input["estimated"]
-                        else "manual",
-                    }
-                )
-                await manager.storage.flush()
-                return self.async_create_entry(title="", data=dict(self.config_entry.options))
+                current = asdict(player.control.profile)
+                baseline = {**self._profile_defaults, "unconfirmed_end": self._unconfirmed_default}
+                changes = dict(self._profile_pending)
+                selected = "estimated_duration" if user_input["estimated"] else "manual"
+                if selected != self._unconfirmed_default:
+                    changes["unconfirmed_end"] = selected
+                # Unedited fields keep their latest value; conflicting edits require
+                # reopening instead of silently replacing another entry point's save.
+                if any(
+                    current[key] not in (baseline[key], value) for key, value in changes.items()
+                ):
+                    errors["base"] = "profile_changed"
+                elif (
+                    changes.get("feedback_mode", current["feedback_mode"]) == "standard"
+                    and changes.get("unconfirmed_end", current["unconfirmed_end"]) != "manual"
+                ):
+                    errors["base"] = "profile_changed"
+                else:
+                    player.set_playback_profile(changes)
+                    await manager.storage.flush()
+                    return self.async_create_entry(title="", data=dict(self.config_entry.options))
             except ValueError:
                 errors["base"] = "invalid_profile"
+        else:
+            self._unconfirmed_default = player.control.profile.unconfirmed_end
         return self.async_show_form(
             step_id="unconfirmed_end",
             errors=errors,
@@ -388,7 +401,9 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Required(
                         "estimated",
-                        default=self._profile_defaults["unconfirmed_end"] == "estimated_duration",
+                        default=user_input["estimated"]
+                        if user_input is not None
+                        else self._unconfirmed_default == "estimated_duration",
                     ): BooleanSelector(),
                 }
             ),

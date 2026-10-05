@@ -106,6 +106,7 @@
     "error": {
       "invalid_output": "无法验证这个输出播放器。请下载诊断信息；必要时启用调试日志，复现后提交问题。",
       "invalid_profile": "播放兼容参数无效，请检查后重试。",
+      "profile_changed": "播放设置已在其他入口修改，与本次编辑冲突。请重新打开设置，核对最新值后再保存。",
       "output_not_media_player": "请选择 Home Assistant 的媒体播放器实体。",
       "output_self": "不能将飞牛播放器自身作为输出，请选择音箱对应的底层播放器。",
       "output_missing_registry": "所选输出的实体注册记录已丢失。请在 HA 中重新确认该音箱实体，再重新选择。",

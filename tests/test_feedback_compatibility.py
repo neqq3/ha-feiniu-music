@@ -776,3 +776,197 @@ async def test_compatibility_diagnostics_are_bounded_and_do_not_leak_identity(ma
     assert data["profile"]["feedback_mode"] == "compatibility"
     assert data["confirmation_stage"] == "assumed"
     assert "PRIVATE" not in str(data) and "http" not in str(data)
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_pending_resume_keeps_estimate_frozen_until_service_success(make, fails):
+    h = make(estimated=True, duration=30)
+    task = await h.begin()
+    h.byte()
+    await h.expire(task)
+    await h.session.pause()
+    gate = asyncio.get_running_loop().create_future()
+
+    async def command(service, data):
+        if service == "media_play":
+            await gate
+
+    h.output.hook = command
+    resume = asyncio.create_task(h.session.start())
+    await h.settle()
+    try:
+        h.output.report("paused", h.session._expected)
+        await h.tick(50)  # Past the old deadline, while resume has not succeeded.
+        assert h.session.round_id == 1 and h.session.queue.position == 0
+        assert not resume.done() and h.session._estimated_end is None
+        assert h.session.estimated_end_blocked_reason == "resume_pending"
+        assert h.session.timeline.estimated_elapsed() == 20
+        if fails:
+            gate.set_exception(HomeAssistantError("synthetic resume failure"))
+            with pytest.raises(HomeAssistantError):
+                await resume
+            await h.tick(100)
+            assert h.session.phase == "failed" and not h.session.owned
+            assert h.session.round_id == 1 and h.session._estimated_end is None
+        else:
+            gate.set_result(None)
+            await resume
+            assert h.session._estimated_end.when() == h.clock.now + 15
+            await h.tick(14.999)
+            assert h.session.round_id == 1
+            await h.tick(0.001)
+            assert h.session.round_id == 2 and h.session.queue.position == 1
+    finally:
+        if not gate.done():
+            gate.set_result(None)
+        await asyncio.gather(resume, return_exceptions=True)
+
+
+@pytest.mark.parametrize("action", ["next", "new", "stop", "close"])
+@pytest.mark.parametrize("fails", [False, True])
+async def test_superseded_resume_cannot_rearm_or_change_new_session(make, action, fails):
+    h = make(estimated=True, duration=30)
+    task = await h.begin()
+    h.byte()
+    await h.expire(task)
+    stale_callback = h.session._estimated_end._callback
+    await h.session.pause()
+    gate = asyncio.get_running_loop().create_future()
+
+    async def command(service, data):
+        if service == "media_play":
+            try:
+                await asyncio.shield(gate)
+            except asyncio.CancelledError:
+                await gate  # A service implementation may finish despite cancellation.
+
+    h.output.hook = command
+    resume = asyncio.create_task(h.session.start())
+    await h.settle()
+    if action == "new":
+        newer = asyncio.create_task(
+            h.session.jump(h.session.queue.order[2], h.session.queue.revision)
+        )
+    else:
+        newer = asyncio.create_task(getattr(h.session, action)())
+    await h.settle()
+    if action in {"next", "new"}:
+        h.byte()
+        h.playing()
+        await newer
+    snapshot = (h.session.round_id, h.session.phase, h.session.owned, h.cancel.call_count)
+    if fails:
+        gate.set_exception(HomeAssistantError("synthetic stale resume failure"))
+    else:
+        gate.set_result(None)
+    await asyncio.gather(resume, newer, return_exceptions=True)
+    stale_callback()
+    await h.tick(100)
+    assert (h.session.round_id, h.session.phase, h.session.owned, h.cancel.call_count) == snapshot
+    assert h.session._estimated_end is None
+
+
+@pytest.mark.parametrize("mode", ["standard", "compatibility"])
+@pytest.mark.parametrize("service", ["media_pause", "media_stop"])
+@pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize("action", ["next", "close"])
+async def test_stale_control_completion_cannot_clean_up_new_generation(
+    make, mode, service, fails, action
+):
+    h = make(profile=OutputProfile(feedback_mode=mode))
+    task = await h.begin()
+    h.byte()
+    h.playing()
+    await task
+    gate = asyncio.get_running_loop().create_future()
+
+    async def command(name, data):
+        if name == service:
+            await gate
+
+    h.output.hook = command
+    old = asyncio.create_task(getattr(h.session, service.removeprefix("media_"))())
+    await h.settle()
+    newer = asyncio.create_task(getattr(h.session, action)())
+    await h.settle()
+    if action == "next":
+        h.byte()
+        h.playing()
+    await newer
+    snapshot = (
+        h.session.round_id,
+        h.session.generation,
+        h.session.phase,
+        h.session.reason,
+        h.session.owned,
+        h.session._controlled,
+        h.cancel.call_count,
+        h.session._notify.call_count,
+    )
+    if fails:
+        gate.set_exception(HomeAssistantError("synthetic stale control failure"))
+    else:
+        gate.set_result(None)
+    result = (await asyncio.gather(old, return_exceptions=True))[0]
+    assert (
+        h.session.round_id,
+        h.session.generation,
+        h.session.phase,
+        h.session.reason,
+        h.session.owned,
+        h.session._controlled,
+        h.cancel.call_count,
+        h.session._notify.call_count,
+    ) == snapshot
+    assert isinstance(result, asyncio.CancelledError)
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+async def test_compatibility_buffering_survives_pause_resume_until_new_playing(make, confirmed):
+    h = make(estimated=True)
+    task = await h.begin()
+    h.byte()
+    await h.expire(task)
+    if confirmed:
+        h.playing(position=20)
+    h.output.report("buffering", h.session._expected)
+    await h.session.pause()
+    frozen = h.session.timeline.position()
+
+    async def command(service, data):
+        if service == "media_play":
+            h.output.report("paused", h.session._expected)
+
+    h.output.hook = command
+    await h.session.start()
+    h.output.report("paused", h.session._expected)
+    await h.tick(50)
+    assert h.session.phase == "buffering"
+    assert h.session.timeline.position() == frozen
+    assert h.session._estimated_end is None
+    h.playing(position=21)
+    assert h.session.phase == "playing" and not h.session._estimate_buffering
+    assert h.session.confirmation_stage == "confirmed"
+    await h.tick(1)
+    assert h.session.timeline.position() == 22
+
+
+@pytest.mark.parametrize("action", ["next", "stop", "close"])
+async def test_buffering_observation_does_not_survive_round_or_session_end(make, action):
+    h = make(estimated=True)
+    task = await h.begin()
+    h.byte()
+    await h.expire(task)
+    h.playing()
+    h.output.report("buffering", h.session._expected)
+    assert h.session._estimate_buffering
+    operation = asyncio.create_task(getattr(h.session, action)())
+    await h.settle()
+    if action == "next":
+        h.byte()
+        await h.expire(operation)
+        assert h.session.phase == "playing" and h.session.round_id == 2
+    else:
+        await operation
+        assert not h.session.owned and h.session._estimated_end is None
+    assert not h.session._estimate_buffering

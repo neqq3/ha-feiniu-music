@@ -119,6 +119,7 @@ class PlaybackSession:
         self._first_byte: float | None = None
         self._before_state: State | None = None
         self._local_resume = False
+        self._resume_pending = False
         self._estimate_buffering = False
         self._estimated_end: asyncio.TimerHandle | asyncio.Handle | None = None
         self._estimate_token: object | None = None
@@ -177,6 +178,8 @@ class PlaybackSession:
             return "seek_pending"
         if self.intent != "play":
             return "paused" if self.intent == "pause" else "inactive"
+        if self._resume_pending:
+            return "resume_pending"
         if self._estimate_buffering:
             return "buffering"
         if self._ended_round == self.round_id or self.queue.current is None:
@@ -195,7 +198,7 @@ class PlaybackSession:
             return
         if self._command_return is not None and self._first_byte is not None:
             self.timeline.start_estimate(max(self._command_return, self._first_byte))
-            if self.intent != "play" or self._estimate_buffering:
+            if self.intent != "play" or self._estimate_buffering or self._resume_pending:
                 self.timeline.freeze_estimate()
         blocked = self._estimate_blocked()
         if blocked != self.estimated_end_blocked_reason:
@@ -307,6 +310,9 @@ class PlaybackSession:
 
     def _invalidate(self, intent: str) -> int:
         self._cancel_estimated(intent)
+        self._resume_pending = False
+        if intent in {"stop", "unload", "detach", "failure"}:
+            self._estimate_buffering = False
         self.generation += 1
         self.intent = intent
         current = asyncio.current_task()
@@ -472,9 +478,12 @@ class PlaybackSession:
             raise ServiceValidationError("Output cannot resume at this time")
         self.phase, self.reason = "loading", "resuming"
         self._local_resume = self.compatible
+        self._resume_pending = self.compatible
+        self._sync_estimated()
         self.changed()
         await self._send(generation, "media_play")
         if self.compatible:
+            self._resume_pending = False
             if self._estimate_buffering:
                 self.phase, self.reason = "buffering", "output_buffering"
             elif self._local_resume:
@@ -687,6 +696,8 @@ class PlaybackSession:
             and self.intent == "play"
             and new.state == "paused"
             and (self.confirmation_stage != "confirmed" or self._local_resume)
+            and not self._estimate_buffering
+            and not self._resume_pending
         ):
             timeline_state = "playing"
         if self.timeline.observe(self.round_id, timeline_state, new.attributes):
@@ -764,7 +775,7 @@ class PlaybackSession:
         ):
             self.detach("output_stopped")
             return
-        if self.compatible and self.confirmation_stage != "confirmed":
+        if self.compatible:
             if new.state == "buffering":
                 self._estimate_buffering = True
                 self.timeline.freeze_estimate()
@@ -772,10 +783,13 @@ class PlaybackSession:
                 self.phase, self.reason = "buffering", "output_buffering"
             elif new.state == "playing" and self._estimate_buffering:
                 self._estimate_buffering = False
-                self.timeline.resume_estimate()
+                if not self._resume_pending:
+                    self.timeline.resume_estimate()
             self._sync_estimated()
             if self.confirmation_stage == "assumed" and self.intent == "play":
-                self.timeline.show_estimate(moving=not self._estimate_buffering)
+                self.timeline.show_estimate(
+                    moving=not self._estimate_buffering and not self._resume_pending
+                )
         self.changed()
 
     async def _auto_advance(self, generation: int) -> None:
@@ -829,6 +843,7 @@ class PlaybackSession:
             try:
                 await self._send(generation, "media_pause")
             except HomeAssistantError:
+                self._check(generation)
                 self._fail("pause_unconfirmed")
                 raise
             if not self._issued:
@@ -856,12 +871,14 @@ class PlaybackSession:
             if self.owned and self._controlled:
                 await self._send(generation, "media_stop")
         except HomeAssistantError:
+            self._check(generation)
             self.phase, self.reason = "failed", "stop_unconfirmed"
             raise
         finally:
-            self._controlled = False
-            self.leases.release(self.output.binding.key, self)
-            self.changed()
+            if generation == self.generation and not self.closed:
+                self._controlled = False
+                self.leases.release(self.output.binding.key, self)
+                self.changed()
 
     async def seek(self, position: float) -> None:
         if self.compatible and self.confirmation_stage != "confirmed":

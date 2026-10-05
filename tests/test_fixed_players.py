@@ -554,6 +554,43 @@ async def test_native_profile_refuses_unloaded_account(hass, entry):
     assert result["reason"] == "not_loaded"
 
 
+@pytest.mark.parametrize(
+    "external",
+    [{"unconfirmed_end": "estimated_duration"}, {"feedback_mode": "standard"}],
+)
+async def test_native_second_step_preserves_concurrent_card_strategy(
+    hass, installed, entry, hass_ws_client, external
+):
+    manager, outputs = installed
+    player = next(iter(manager.entities.values()))
+    player.set_playback_profile({"feedback_mode": "compatibility"})
+    flow = await playback_options(hass, entry, player)
+    second = await hass.config_entries.options.async_configure(
+        flow["flow_id"], flow["data_schema"]({})
+    )
+    original_toggle = second["data_schema"]({})
+    ws = await hass_ws_client(hass)
+    register(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "feiniu_music/preferences",
+            "entity_id": player.entity_id,
+            "profile": external,
+        }
+    )
+    assert (await ws.receive_json())["success"]
+    expected = player.control.profile
+    result = await hass.config_entries.options.async_configure(second["flow_id"], original_toggle)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert player.control.profile == expected
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    restored = hass.data[DOMAIN]["players"][entry.entry_id]
+    assert restored.entities[player.saved.binding.key].control.profile == expected
+    assert all(not output.calls for output in outputs)
+
+
 async def test_card_partial_profile_still_requires_admin(
     hass, installed, hass_ws_client, hass_admin_user
 ):

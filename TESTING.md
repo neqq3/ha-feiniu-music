@@ -60,15 +60,19 @@ feedback, pause/resume/seek/stop).
 The full HA 2026.9.4 pytest plugin cannot load on this Windows host: its runner
 imports Linux `fcntl`. The HA 2025.12.2 environment also cannot finish its pinned
 dependency install because `lru-dict==1.3.0` needs an unavailable Windows C++ compiler.
-Neither Linux matrix job has run for these changes; existing historical CI results
-below do not validate this patch. No dependency pins were loosened, OS interfaces
-stubbed, tests removed or remote deployment used to disguise these limits.
+The full Linux checks subsequently passed for commit `0634f28c` in
+[Actions #37257824516](https://github.com/neqq3/ha-feiniu-music/actions/runs/37257824516):
+HA 2025.12.2 / Python 3.13 and HA 2026.9.4 / Python 3.14 each passed **630 tests**,
+Ruff, formatting and mypy. The card passed **9 unit tests**, build consistency,
+Chromium and WebKit. The first CI attempt passed without implementation fixes,
+workflow changes, relaxed dependencies or skipped tests. This validates the
+synthetic suites, not physical speaker behavior.
 
 The frontend now runs `feedback-check.mjs` on **both** Chromium and WebKit, covering
 English/Chinese settings, compatibility-only opt-in, runtime notices, disabled
 seek/lyric jumps and late confirmation. The regular Chromium suite and existing
-WebKit browse/artist regressions remain enabled. Run the Linux matrix before
-committing/releasing this implementation.
+WebKit browse/artist regressions remain enabled. Later fixes require a new matrix run;
+the result above applies only to `0634f28c`.
 
 ## Paged browsing and lifecycle — 2026-10-04
 

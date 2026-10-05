@@ -106,6 +106,7 @@
     "error": {
       "invalid_output": "This output could not be validated. Download diagnostics and, if needed, reproduce with debug logging before reporting the problem.",
       "invalid_profile": "Invalid playback preferences. Check the values and try again.",
+      "profile_changed": "Playback preferences changed elsewhere and conflict with this edit. Reopen settings to review the latest values.",
       "output_not_media_player": "Choose a Home Assistant media player entity.",
       "output_self": "A FeiNiu player cannot be its own output. Choose the underlying speaker player.",
       "output_missing_registry": "The output's entity registry entry is missing. Check the speaker entity in HA and select it again.",
