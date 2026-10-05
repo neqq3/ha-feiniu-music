@@ -99,7 +99,7 @@ theme: dark
 如果你使用 YAML 管理仪表盘**资源**，需要把下面这一项加入 `configuration.yaml` 中已有的 `lovelace.resources` 列表，保留原来的模式设置：
 
 ```yaml
-- url: /feiniu_music/feiniu-music-card.js?v=1.1.0-beta.1
+- url: /feiniu_music/feiniu-music-card.js?v=1.1.0-beta.2
   type: module
 ```
 
