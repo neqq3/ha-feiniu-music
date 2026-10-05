@@ -26,6 +26,7 @@ def legacy_record(account, output, profile):
     data = SavedSession(binding, queue, profile, 12.5, -0.5).snapshot()
     data["profile"].pop("feedback_mode")
     data["profile"].pop("unconfirmed_end")
+    data["profile"].pop("end_offset")
     return binding.key, data
 
 
@@ -33,6 +34,39 @@ def migrator(account):
     store = object.__new__(_QueueStore)
     store.entry_id = account
     return store
+
+
+@pytest.mark.parametrize("policy", ["manual", "estimated_duration", "duration_fallback"])
+def test_old_v2_missing_offset_defaults_to_zero_without_changing_queue(policy):
+    profile = OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy)
+    _, data = legacy_record("a", "synthetic", profile)
+    data["profile"] = asdict(profile)
+    data["profile"].pop("end_offset")
+    original = deepcopy(data)
+    restored = SavedSession.restore(data, "a")
+    assert data == original
+    assert restored.profile.end_offset == 0
+    expected = deepcopy(data)
+    expected["profile"]["end_offset"] = 0
+    assert restored.snapshot() == expected
+
+
+@pytest.mark.parametrize("offset", [-30, -2, 0, 2, 30])
+def test_offset_storage_round_trip(offset):
+    profile = OutputProfile(
+        feedback_mode="compatibility", unconfirmed_end="duration_fallback", end_offset=offset
+    )
+    _, data = legacy_record("a", "synthetic", profile)
+    data["profile"] = asdict(profile)
+    assert SavedSession.restore(data, "a").snapshot() == data
+
+
+@pytest.mark.parametrize("offset", [-31, 31, True, "2", 1.5, float("nan")])
+def test_bad_saved_offset_is_not_silently_reset(offset):
+    _, data = legacy_record("a", "synthetic", OutputProfile())
+    data["profile"] = {**asdict(OutputProfile()), "end_offset": offset}
+    with pytest.raises(ValueError):
+        SavedSession.restore(data, "a")
 
 
 @pytest.mark.parametrize("policy", ["manual", "estimated_duration", "duration_fallback"])
@@ -66,7 +100,7 @@ async def test_all_24_v1_profiles_migrate_atomically_with_offline_records(values
     for key, row in migrated["outputs"].items():
         assert row["profile"] == asdict(profile)
         expected = deepcopy(original["outputs"][key])
-        expected["profile"].update(feedback_mode="standard", unconfirmed_end="manual")
+        expected["profile"].update(feedback_mode="standard", unconfirmed_end="manual", end_offset=0)
         assert row == expected  # Includes occurrence IDs, order, revision, binding and position.
     assert await migrator("a")._async_migrate_func(2, 1, migrated) == migrated
     assert not any(

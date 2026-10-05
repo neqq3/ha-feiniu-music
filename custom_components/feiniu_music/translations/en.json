@@ -97,9 +97,13 @@
       },
       "unconfirmed_end": {
         "title": "Playback feedback and continuation",
-        "description": "Defaults to device end feedback. Unconfirmed-only estimation cancels on confirmation; persistent fallback keeps the deadline even after confirmation for outputs missing end feedback. Requires a successful play request, first-byte delivery for this round and a valid duration. Starts at the later of command return and delivery, then uses duration plus 5 seconds for unconfirmed-only estimation, or duration with 0 seconds of extra delay for persistent fallback. Pause/buffering freezes the clock; acknowledged seeks through FeiNiu recalculate it. Delayed starts, inaccurate durations or unreported external controls can cause early or late changes. Delivery does not prove sound. Takes effect next round.",
+        "description": "Duration fallback requires successful loading, first-byte delivery and a valid duration. Both options use duration plus the configured time adjustment, default 0 seconds. Unconfirmed-only estimation cancels on confirmation; persistent fallback keeps the deadline. Pause/buffering freezes it; acknowledged seeks through FeiNiu recalculate it. Delayed starts or unreported external controls can cause early or late changes. Takes effect next round.",
         "data": {
-          "unconfirmed_end": "Continuation strategy"
+          "unconfirmed_end": "Continuation strategy",
+          "end_offset": "Automatic track-change adjustment"
+        },
+        "data_description": {
+          "end_offset": "Negative values advance earlier; positive values delay the change; 0 adds no adjustment. Shared by both duration strategies, saved per output, effective next track. Earlier changes can cut off the end of a song. Only applies to duration-based continuation."
         }
       }
     },

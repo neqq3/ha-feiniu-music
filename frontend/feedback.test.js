@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {FeiNiuMusicCard} from './feiniu-music-card.js';
 
-const keys=['settings','feedbackMode','standardMode','compatibilityMode','feedbackHelp','estimateEnd','estimateHelp','endFeedback','endUnconfirmed','endFallback','confirmationHelp','awaitingFeedback','assumedFeedback','pauseRequested','resumeRequested','late_confirmed','estimated_end','durationUnknown','seekUnconfirmed'];
+const keys=['settings','feedbackMode','standardMode','compatibilityMode','feedbackHelp','estimateEnd','estimateHelp','endOffset','endOffsetHelp','endFeedback','endUnconfirmed','endFallback','confirmationHelp','awaitingFeedback','assumedFeedback','pauseRequested','resumeRequested','late_confirmed','estimated_end','durationUnknown','seekUnconfirmed'];
 test('feedback labels exist distinctly in both card languages',()=>{
  for(const key of keys){
   const en=FeiNiuMusicCard.prototype.t.call({_hass:{language:'en'}},key);
@@ -28,8 +28,8 @@ test('native language keys match and confirmation help retains AND semantics',as
  assert.deepEqual(source,en);assert.deepEqual(paths(en),paths(zh));
  assert.match(en.options.step.playback_profile.data_description.confirmation,/association and a playing report/);
  assert.match(zh.options.step.playback_profile.data_description.confirmation,/关联检查和输出报告/);
- assert.match(en.options.step.unconfirmed_end.description,/5 seconds/);
- assert.match(zh.options.step.unconfirmed_end.description,/5 秒/);
  assert.match(en.options.step.unconfirmed_end.description,/0 seconds/);
- assert.match(zh.options.step.unconfirmed_end.description,/额外等待 0 秒/);
+ assert.match(zh.options.step.unconfirmed_end.description,/默认 0 秒/);
+ assert.match(en.options.step.unconfirmed_end.data_description.end_offset,/Negative.*positive/);
+ assert.match(zh.options.step.unconfirmed_end.data_description.end_offset,/负数提前.*正数延后/);
 });

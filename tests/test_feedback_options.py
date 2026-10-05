@@ -67,7 +67,7 @@ async def test_second_step_baseline_is_the_value_shown_on_entering_that_step(opt
     first = await flow.async_step_playback_profile()
     player.set_playback_profile({"unconfirmed_end": "estimated_duration"})
     second = await flow.async_step_playback_profile(first["data_schema"]({}))
-    assert second["data_schema"]({}) == {"unconfirmed_end": "estimated_duration"}
+    assert second["data_schema"]({}) == {"unconfirmed_end": "estimated_duration", "end_offset": 0}
     result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "manual"})
     assert result["type"] == "create_entry"
     assert player.control.profile.unconfirmed_end == "manual"
@@ -104,7 +104,7 @@ async def test_second_step_conflict_requires_reopening_without_partial_save(opti
     expected = player.control.profile
     result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "estimated_duration"})
     assert result["type"] == "form" and result["errors"] == {"base": "profile_changed"}
-    assert result["data_schema"]({}) == {"unconfirmed_end": "estimated_duration"}
+    assert result["data_schema"]({}) == {"unconfirmed_end": "estimated_duration", "end_offset": 0}
     assert player.control.profile == expected
     storage.flush.assert_not_awaited()
 
@@ -149,4 +149,45 @@ async def test_conflicting_continuation_choices_do_not_overwrite_each_other(opti
     result = await flow.async_step_unconfirmed_end({"unconfirmed_end": "duration_fallback"})
     assert result["errors"] == {"base": "profile_changed"}
     assert player.control.profile.unconfirmed_end == "estimated_duration"
+    storage.flush.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "external,selected,conflict", [(-2, 0, False), (-2, -2, False), (-2, 2, True)]
+)
+async def test_offset_concurrent_edits_preserve_or_reject_without_partial_save(
+    options, external, selected, conflict
+):
+    flow, player, storage = options
+    player.set_playback_profile(
+        {"feedback_mode": "compatibility", "unconfirmed_end": "duration_fallback"}
+    )
+    first = await flow.async_step_playback_profile()
+    second = await flow.async_step_playback_profile(first["data_schema"]({}))
+    defaults = second["data_schema"]({})
+    assert defaults["end_offset"] == 0
+    player.set_playback_profile({"end_offset": external})
+    result = await flow.async_step_unconfirmed_end({**defaults, "end_offset": selected})
+    assert player.control.profile.end_offset == external
+    if conflict:
+        assert result["errors"] == {"base": "profile_changed"}
+        storage.flush.assert_not_awaited()
+    else:
+        assert result["type"] == "create_entry"
+        storage.flush.assert_awaited_once()
+
+
+@pytest.mark.parametrize("offset", [-31, 31, 0.5, float("nan")])
+async def test_invalid_offset_cannot_partially_save_options(options, offset):
+    flow, player, storage = options
+    original = player.control.profile
+    first = await flow.async_step_playback_profile()
+    await flow.async_step_playback_profile(
+        {**first["data_schema"]({}), "feedback_mode": "compatibility"}
+    )
+    result = await flow.async_step_unconfirmed_end(
+        {"unconfirmed_end": "duration_fallback", "end_offset": offset}
+    )
+    assert result["errors"] == {"base": "invalid_profile"}
+    assert player.control.profile == original
     storage.flush.assert_not_awaited()

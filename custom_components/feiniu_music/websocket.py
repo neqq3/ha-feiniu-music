@@ -182,6 +182,7 @@ async def get_lyrics(
                 ["manual", "estimated_duration", "duration_fallback"]
             ),
             vol.Optional("confirmation"): vol.In(["delivery", "reported"]),
+            vol.Optional("end_offset"): vol.All(vol.Any(int, float), vol.Range(min=-30, max=30)),
             vol.Optional("play_once"): bool,
             vol.Optional("end_state"): vol.In(["idle", "paused", "off"]),
             vol.Optional("weak_end"): bool,

@@ -249,5 +249,28 @@ async def test_real_ha_store_migrates_all_profiles_and_preserves_offline_outputs
         }
         for key, value in restored.items():
             expected = original["outputs"][key]
-            expected["profile"].update(feedback_mode="standard", unconfirmed_end="manual")
+            expected["profile"].update(
+                feedback_mode="standard", unconfirmed_end="manual", end_offset=0
+            )
             assert value.snapshot() == expected
+
+
+async def test_real_v2_store_without_offset_restores_and_saves_default_zero(hass, hass_storage):
+    storage = QueueStorage(hass, "account-one")
+    record = saved(OutputBinding("entity:media_player.one", "media_player.one"))
+    old = record.snapshot()
+    old["profile"].pop("end_offset")
+    hass_storage[storage.store.key] = {
+        "version": 2,
+        "minor_version": 1,
+        "key": storage.store.key,
+        "data": {"outputs": {record.binding.key: old}},
+    }
+    restored = await storage.load()
+    assert not storage.corrupt
+    assert restored[record.binding.key].profile.end_offset == 0
+    assert restored[record.binding.key].queue.snapshot() == record.queue.snapshot()
+    storage.stage(restored[record.binding.key])
+    await storage.flush()
+    again = await QueueStorage(hass, "account-one").load()
+    assert again[record.binding.key].snapshot() == record.snapshot()

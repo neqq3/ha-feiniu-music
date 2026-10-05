@@ -396,11 +396,14 @@ async def test_native_playback_options_are_per_proxy_persistent_and_do_not_resta
     ):
         flow = await playback_options(hass, entry, first)
         assert flow["data_schema"]({}) == {
-            k: v for k, v in asdict(first.control.profile).items() if k != "unconfirmed_end"
+            k: v
+            for k, v in asdict(first.control.profile).items()
+            if k not in {"unconfirmed_end", "end_offset"}
         }
         settings = asdict(OutputProfile(confirmation="delivery", play_once=True, weak_end=True))
         result = await hass.config_entries.options.async_configure(
-            flow["flow_id"], {k: v for k, v in settings.items() if k != "unconfirmed_end"}
+            flow["flow_id"],
+            {k: v for k, v in settings.items() if k not in {"unconfirmed_end", "end_offset"}},
         )
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
@@ -461,7 +464,7 @@ async def test_card_and_native_settings_share_state_without_overwriting_unedited
         for k, v in asdict(
             OutputProfile(confirmation="reported", end_state="off", play_once=True)
         ).items()
-        if k != "unconfirmed_end"
+        if k not in {"unconfirmed_end", "end_offset"}
     }
     hass.config_entries.options.async_abort(flow["flow_id"])
     assert second.control.profile == OutputProfile(confirmation="reported")
@@ -490,8 +493,9 @@ async def test_native_profile_can_be_configured_offline_and_cancel_does_not_chan
 
 
 @pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
+@pytest.mark.parametrize("offset", [-30, 0, 30])
 async def test_native_compatibility_step_is_conditional_and_saves_atomically(
-    hass, installed, entry, policy
+    hass, installed, entry, policy, offset
 ):
     manager, outputs = installed
     player = next(iter(manager.entities.values()))
@@ -503,7 +507,7 @@ async def test_native_compatibility_step_is_conditional_and_saves_atomically(
         flow["flow_id"], {**form, "feedback_mode": "compatibility"}
     )
     assert step["step_id"] == "unconfirmed_end"
-    assert step["data_schema"]({}) == {"unconfirmed_end": "manual"}
+    assert step["data_schema"]({}) == {"unconfirmed_end": "manual", "end_offset": 0}
     assert player.control.profile == before
     hass.config_entries.options.async_abort(step["flow_id"])
     assert player.control.profile == before
@@ -512,11 +516,14 @@ async def test_native_compatibility_step_is_conditional_and_saves_atomically(
         flow["flow_id"], {**form, "feedback_mode": "compatibility"}
     )
     result = await hass.config_entries.options.async_configure(
-        step["flow_id"], {"unconfirmed_end": policy}
+        step["flow_id"], {"unconfirmed_end": policy, "end_offset": offset}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert player.control.profile.feedback_mode == "compatibility"
     assert player.control.profile.unconfirmed_end == policy
+    assert player.control.profile.end_offset == offset
+    assert player.control.end_offset == 0  # Saving does not change the current round.
+    assert list(manager.entities.values())[1].control.profile.end_offset == 0
     assert player.control.feedback_mode == "standard"  # Next round, not retroactive.
     assert all(not output.calls for output in outputs)
     flow = await playback_options(hass, entry, player)
@@ -562,6 +569,7 @@ async def test_native_profile_refuses_unloaded_account(hass, entry):
     [
         {"unconfirmed_end": "estimated_duration"},
         {"unconfirmed_end": "duration_fallback"},
+        {"end_offset": -2},
         {"feedback_mode": "standard"},
     ],
 )
@@ -617,3 +625,66 @@ async def test_card_partial_profile_still_requires_admin(
     )
     assert (await ws.receive_json())["error"]["code"] == "unauthorized"
     assert not player.control.profile.play_once
+
+
+@pytest.mark.parametrize("offset", [-30, -2, 0, 2, 30])
+async def test_card_offset_is_per_output_and_survives_reload(
+    hass, installed, entry, hass_ws_client, offset
+):
+    manager, outputs = installed
+    first, second = list(manager.entities.values())
+    ws = await hass_ws_client(hass)
+    register(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "feiniu_music/preferences",
+            "entity_id": first.entity_id,
+            "profile": {
+                "feedback_mode": "compatibility",
+                "unconfirmed_end": "duration_fallback",
+                "end_offset": offset,
+            },
+        }
+    )
+    assert (await ws.receive_json())["success"]
+    assert first.control.profile.end_offset == offset
+    assert second.control.profile.end_offset == 0
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    restored = hass.data[DOMAIN]["players"][entry.entry_id]
+    assert restored.entities[first.saved.binding.key].control.profile.end_offset == offset
+    assert restored.entities[second.saved.binding.key].control.profile.end_offset == 0
+    flow = await playback_options(hass, entry, restored.entities[first.saved.binding.key])
+    second_step = await hass.config_entries.options.async_configure(
+        flow["flow_id"], flow["data_schema"]({})
+    )
+    assert second_step["data_schema"]({})["end_offset"] == offset
+    hass.config_entries.options.async_abort(second_step["flow_id"])
+    assert all(not output.calls for output in outputs)
+
+
+@pytest.mark.parametrize("offset", [-31, 31, True, False, 0.5, "2", None])
+async def test_card_invalid_offset_cannot_partially_change_profile(
+    hass, installed, hass_ws_client, offset
+):
+    manager, outputs = installed
+    player = next(iter(manager.entities.values()))
+    before = player.control.profile
+    ws = await hass_ws_client(hass)
+    register(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "feiniu_music/preferences",
+            "entity_id": player.entity_id,
+            "profile": {
+                "feedback_mode": "compatibility",
+                "unconfirmed_end": "duration_fallback",
+                "end_offset": offset,
+            },
+        }
+    )
+    assert not (await ws.receive_json())["success"]
+    assert player.control.profile == before
+    assert all(not output.calls for output in outputs)

@@ -53,7 +53,7 @@ class SavedSession:
         if any(item.source and not item.source.startswith(prefix) for item in queue.items.values()):
             raise QueueError("Saved media context belongs to another account")
         profile = data["profile"]
-        if not isinstance(profile, dict) or set(profile) != {
+        if not isinstance(profile, dict) or set(profile) - {"end_offset"} != {
             "confirmation",
             "play_once",
             "end_state",
@@ -113,7 +113,7 @@ class _QueueStore(Store[dict[str, Any]]):
                 profile = value["profile"]
                 if set(profile) != {"confirmation", "play_once", "end_state", "weak_end"}:
                     raise QueueError("Invalid saved output profile")
-                profile.update(feedback_mode="standard", unconfirmed_end="manual")
+                profile.update(feedback_mode="standard", unconfirmed_end="manual", end_offset=0)
         _restore_outputs(data, self.entry_id)
         return data
 

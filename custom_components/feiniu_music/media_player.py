@@ -251,6 +251,7 @@ class FeiNiuPlayer(MediaPlayerEntity):
             "confirmation_stage": session.confirmation_stage if session else None,
             "effective_feedback_mode": session.feedback_mode if session else "standard",
             "effective_unconfirmed_end": session.unconfirmed_end if session else "manual",
+            "effective_end_offset": session.end_offset if session else 0,
             "estimated_end_blocked_reason": session.estimated_end_blocked_reason
             if session
             else None,

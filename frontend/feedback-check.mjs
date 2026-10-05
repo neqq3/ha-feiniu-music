@@ -9,20 +9,39 @@ export async function checkFeedback(browser,url){
   await page.goto(url);
   const card=page.locator('feiniu-music-card').first();
   await card.locator('.tile').first().waitFor();
-  for(const language of ['zh-Hans','en'])for(const policy of ['estimated_duration','duration_fallback']){
+  for(const language of ['zh-Hans','en'])for(const policy of ['estimated_duration','duration_fallback'])for(const offset of [-2,0,2]){
    await page.evaluate(language=>{hass.language=language;document.querySelector('feiniu-music-card').hass=hass;},language);
    await card.getByRole('button',{name:language==='en'?'Playback feedback and continuation':'播放反馈与续播',exact:true}).click();
    assert.equal(await card.locator('#feedback-mode').inputValue(),'standard');
    assert.equal(await card.locator('#estimated-end').isVisible(),false);
+   assert.equal(await card.locator('#end-offset').isVisible(),false);
    assert.match(await card.locator('#confirmation').textContent(),language==='en'?/Playing report plus audio delivery/:/播放中反馈，并有音频传输/);
    await card.locator('#feedback-mode').selectOption('compatibility');
    assert.equal(await card.locator('#estimated-end').isVisible(),true);
    assert.equal(await card.locator('#estimated-end').inputValue(),'manual');
+   assert.equal(await card.locator('#end-offset').isVisible(),false);
    assert.equal(await card.locator('#estimated-end option').count(),3);
    assert.match(await card.locator('#estimated-end').textContent(),language==='en'?/Keep duration fallback after confirmation/:/始终保留时长兜底/);
    await card.locator('#estimated-end').selectOption(policy);
+   const input=card.locator('#end-offset');
+   assert.equal(await input.isVisible(),true);
+   assert.equal(await input.inputValue(),'0');
+   assert.equal(await input.getAttribute('min'),'-30');
+   assert.equal(await input.getAttribute('max'),'30');
+   assert.equal(await input.getAttribute('step'),'1');
+   assert.match(await input.locator('..').textContent(),language==='en'?/Automatic track-change adjustment/:/自动切歌时间调整/);
+   const before=await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').length);
+   for(const invalid of ['','-31','31','0.5']){
+    await input.fill(invalid);await card.locator('#save-preferences button').click();
+    assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').length),before);
+    assert.equal(await input.isVisible(),true);
+   }
+   await input.fill(String(offset));
+   await card.locator('#estimated-end').selectOption(policy==='estimated_duration'?'duration_fallback':'estimated_duration');
+   assert.equal(await input.inputValue(),String(offset)); // One shared value across strategies.
+   await card.locator('#estimated-end').selectOption(policy);
    await card.locator('#save-preferences button').click();
-   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),{feedback_mode:'compatibility',unconfirmed_end:policy});
+   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),{feedback_mode:'compatibility',unconfirmed_end:policy,...(offset?{end_offset:offset}:{})});
   }
   await page.evaluate(()=>{
    const c=document.querySelector('feiniu-music-card');
@@ -46,18 +65,20 @@ export async function checkFeedback(browser,url){
   assert.equal(await card.locator('#seek').isDisabled(),false);
   assert.equal(await card.locator('.lyric-seek').first().isDisabled(),false);
   assert.match(await card.locator('#compact-status').textContent(),/已收到本轮播放反馈/);
-  await page.evaluate(()=>{const a=hass.states['media_player.feiniu_a'].attributes;a.playback_profile={feedback_mode:'compatibility',unconfirmed_end:'duration_fallback'};document.querySelector('feiniu-music-card').hass=hass;});
+  await page.evaluate(()=>{const a=hass.states['media_player.feiniu_a'].attributes;a.playback_profile={feedback_mode:'compatibility',unconfirmed_end:'duration_fallback',end_offset:-2};document.querySelector('feiniu-music-card').hass=hass;});
   // Open the existing settings dialog through the actual compact expand interface.
   await page.evaluate(()=>document.querySelector('feiniu-music-card')._preferences());
   assert.equal(await card.locator('#estimated-end').inputValue(),'duration_fallback');
+  assert.equal(await card.locator('#end-offset').inputValue(),'-2');
   await card.locator('#save-preferences button').click();
   assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),undefined);
   await page.evaluate(()=>document.querySelector('feiniu-music-card')._preferences());
   await card.locator('#feedback-mode').selectOption('standard');
   assert.equal(await card.locator('#estimated-end').isVisible(),false);
+  assert.equal(await card.locator('#end-offset').isVisible(),false);
   await card.locator('#save-preferences button').click();
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),{feedback_mode:'standard',unconfirmed_end:'manual'});
   assert.deepEqual(errors,[]);
-  console.log('Feedback DOM checks passed: bilingual three-policy settings and round-trip save, conditional estimate opt-in, truthful statuses, seek/lyric gating and late confirmation at 390/1280px.');
+  console.log('Feedback DOM checks passed: bilingual signed time adjustment, default zero across both policies, invalid-input blocking, round-trip save, conditional opt-in, truthful statuses, seek/lyric gating and late confirmation at 390/1280px.');
  }finally{await page.close();}
 }

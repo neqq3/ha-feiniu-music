@@ -18,12 +18,11 @@ from .client import FeiNiuError
 from .output import OutputAdapter, OutputLeases
 from .queue import QueueItem, QueueModel
 from .support import private_id, safe_state
-from .timeline import Timeline
+from .timeline import Timeline, number
 
 START_TIMEOUT = 20.0
 COMPAT_PLAY_DELAY = 2.0
 SEEK_TIMEOUT = 5.0
-ESTIMATED_END_GRACE = 5.0
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -47,6 +46,7 @@ class OutputProfile:
     weak_end: bool = False
     feedback_mode: str = "standard"
     unconfirmed_end: str = "manual"
+    end_offset: float = 0
 
     def __post_init__(self) -> None:
         if self.confirmation not in {"delivery", "reported"}:
@@ -61,6 +61,9 @@ class OutputProfile:
             raise ValueError("Invalid continuation policy")
         if self.feedback_mode == "standard" and self.unconfirmed_end != "manual":
             raise ValueError("Estimated continuation requires compatibility mode")
+        offset = number(self.end_offset)
+        if offset is None or not offset.is_integer() or abs(offset) > 30:
+            raise ValueError("Invalid automatic track-change offset")
 
 
 def _identity_url(url: str) -> tuple:
@@ -111,10 +114,11 @@ class PlaybackSession:
         self.identity = "unknown"
         self.confirmation = "unconfirmed"
         self.confirmation_stage: str | None = None
-        # Only the two new strategy choices take effect on the next round. The four
+        # Strategy choices and their time adjustment take effect next round. The four
         # existing preferences deliberately retain their immediate-update semantics.
         self.feedback_mode = "standard"
         self.unconfirmed_end = "manual"
+        self.end_offset: float = 0
         self._command_return: float | None = None
         self._first_byte: float | None = None
         self._before_state: State | None = None
@@ -258,12 +262,9 @@ class PlaybackSession:
                 self._cancel_estimated(self._estimate_blocked() or "stale_round")
 
         assert self.timeline.duration is not None
-        grace = 0.0 if self.duration_fallback else ESTIMATED_END_GRACE
-        remaining = self.timeline.duration + grace - self.timeline.estimated_elapsed()
+        remaining = self.timeline.duration + self.end_offset - self.timeline.estimated_elapsed()
         self._estimated_end = self.hass.loop.call_later(max(0, remaining), due)
-        self.record(
-            "estimated_end_armed", "duration" if self.duration_fallback else "duration_plus_grace"
-        )
+        self.record("estimated_end_armed", "duration_with_offset")
 
     def _finish_round_once(self, reason: str) -> None:
         if self._ended_round == self.round_id:
@@ -544,6 +545,7 @@ class PlaybackSession:
         self._prepare_load()
         self.feedback_mode = self.profile.feedback_mode
         self.unconfirmed_end = self.profile.unconfirmed_end
+        self.end_offset = self.profile.end_offset
         self._command_return = self._first_byte = None
         self._local_resume = self._estimate_buffering = False
         self.estimated_end_blocked_reason = None
@@ -1017,6 +1019,7 @@ class PlaybackSession:
             "confirmation_stage": self.confirmation_stage,
             "effective_feedback_mode": self.feedback_mode,
             "effective_unconfirmed_end": self.unconfirmed_end,
+            "effective_end_offset": self.end_offset,
             "estimated_end_armed": self._estimated_end is not None,
             "estimated_end_blocked_reason": self.estimated_end_blocked_reason,
             "position_source": self.timeline.source,

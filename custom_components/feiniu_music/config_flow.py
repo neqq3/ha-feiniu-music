@@ -16,6 +16,9 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -233,6 +236,7 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
         self._profile_defaults: dict[str, Any] = {}
         self._profile_pending: dict[str, Any] = {}
         self._unconfirmed_default = "manual"
+        self._end_offset_default: float = 0
 
     def _manager(self) -> AccountPlayers | None:
         manager = self.hass.data.get(DOMAIN, {}).get("players", {}).get(self.config_entry.entry_id)
@@ -370,11 +374,18 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 current = asdict(player.control.profile)
-                baseline = {**self._profile_defaults, "unconfirmed_end": self._unconfirmed_default}
+                baseline = {
+                    **self._profile_defaults,
+                    "unconfirmed_end": self._unconfirmed_default,
+                    "end_offset": self._end_offset_default,
+                }
                 changes = dict(self._profile_pending)
                 selected = user_input["unconfirmed_end"]
                 if selected != self._unconfirmed_default:
                     changes["unconfirmed_end"] = selected
+                offset = user_input.get("end_offset", self._end_offset_default)
+                if offset != self._end_offset_default:
+                    changes["end_offset"] = offset
                 # Unedited fields keep their latest value; conflicting edits require
                 # reopening instead of silently replacing another entry point's save.
                 if any(
@@ -394,6 +405,7 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
                 errors["base"] = "invalid_profile"
         else:
             self._unconfirmed_default = player.control.profile.unconfirmed_end
+            self._end_offset_default = player.control.profile.end_offset
         return self.async_show_form(
             step_id="unconfirmed_end",
             errors=errors,
@@ -409,6 +421,20 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
                             options=["manual", "estimated_duration", "duration_fallback"],
                             translation_key="unconfirmed_end",
                             mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "end_offset",
+                        default=user_input.get("end_offset", self._end_offset_default)
+                        if user_input is not None
+                        else self._end_offset_default,
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=-30,
+                            max=30,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="s",
                         )
                     ),
                 }

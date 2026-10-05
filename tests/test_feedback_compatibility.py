@@ -179,6 +179,7 @@ async def make():
             or OutputProfile(
                 feedback_mode="compatibility",
                 unconfirmed_end="estimated_duration" if estimated else "manual",
+                end_offset=5 if estimated else 0,  # Explicit positive-offset coverage.
             ),
             duration,
         )
@@ -284,13 +285,16 @@ async def test_compatible_resume_never_reloads_even_after_late_confirmation(
 
 
 @pytest.mark.parametrize("first_byte_before", [False, True])
-@pytest.mark.parametrize("policy,grace", [("estimated_duration", 5), ("duration_fallback", 0)])
-async def test_estimate_zero_later_of_command_and_delivery_and_exact_grace(
-    make, first_byte_before, policy, grace
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
+@pytest.mark.parametrize("offset", [-30, -2, 0, 2, 30])
+async def test_estimate_zero_later_of_command_and_delivery_and_exact_offset(
+    make, first_byte_before, policy, offset
 ):
     h = make(
-        profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy),
-        duration=10,
+        profile=OutputProfile(
+            feedback_mode="compatibility", unconfirmed_end=policy, end_offset=offset
+        ),
+        duration=60,
     )
     gate = asyncio.get_running_loop().create_future()
 
@@ -308,10 +312,10 @@ async def test_estimate_zero_later_of_command_and_delivery_and_exact_grace(
     if not first_byte_before:
         h.clock.advance(7)
         h.byte()
-    assert h.session._estimated_end.when() == 117 + grace
+    assert h.session._estimated_end.when() == 167 + offset
     for event in ("eof", "get", "eof", "first_byte", "eof"):
         h.session.stream_event(1, event)
-    await h.tick(9.999 + grace)
+    await h.tick(59.999 + offset)
     assert h.session.round_id == 1
     await h.tick(0.001)
     assert h.session.round_id == 2 and h.session.queue.position == 1
@@ -518,7 +522,7 @@ async def test_estimated_end_uses_current_queue_order_once(
     expected = (
         before if repeat == "one" else s.queue.order[(s.queue.position + 1) % len(s.queue.order)]
     )
-    await h.tick(9.999 if confirmed_fallback else 14.999)
+    await h.tick(9.999)
     assert s.round_id == 1
     await h.tick(0.001)
     await task
@@ -586,6 +590,74 @@ def fallback(make):
         profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end="duration_fallback"),
         duration=30,
     )
+
+
+@pytest.mark.parametrize(
+    "offset", [-31, 31, 0.5, True, False, "2", None, float("nan"), float("inf")]
+)
+def test_invalid_track_change_offset_rejected(offset):
+    with pytest.raises(ValueError):
+        OutputProfile(end_offset=offset)
+
+
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
+async def test_negative_offset_short_track_still_requires_audio_and_advances_once(make, policy):
+    h = make(
+        profile=OutputProfile(
+            feedback_mode="compatibility", unconfirmed_end=policy, end_offset=-30
+        ),
+        duration=4,
+    )
+    task = await h.begin()
+    await h.expire(task)
+    assert h.session.round_id == 1 and h.session._estimated_end is None
+    h.byte()
+    await h.tick(0)
+    assert h.session.round_id == 2 and h.session.queue.position == 1
+    await h.tick(100)
+    assert h.session.round_id == 2  # No audio for the new round yet.
+
+
+@pytest.mark.parametrize("policy", ["estimated_duration", "duration_fallback"])
+async def test_offset_edit_applies_next_round_even_after_pause_resume(make, policy):
+    h = make(
+        profile=OutputProfile(feedback_mode="compatibility", unconfirmed_end=policy), duration=60
+    )
+    task = await h.begin()
+    h.byte()
+    if policy == "duration_fallback":
+        h.playing(position=0)
+        await task
+    await h.tick(10)
+    h.session.profile = replace(h.session.profile, end_offset=-2)
+    await h.session.pause()
+    await task
+    await h.tick(100)
+    await h.session.start()
+    assert h.session.end_offset == 0
+    await h.tick(49.999)
+    assert h.session.round_id == 1
+    await h.tick(0.001)
+    assert h.session.round_id == 2 and h.session.end_offset == -2
+    h.byte()
+    await h.tick(57.999)
+    assert h.session.round_id == 2
+    await h.tick(0.001)
+    assert h.session.round_id == 3
+
+
+@pytest.mark.parametrize("offset", [-2, 0, 2])
+async def test_offset_used_after_confirmed_seek(fallback, offset):
+    h = fallback
+    h.session.profile = replace(h.session.profile, end_offset=offset)
+    await confirmed(h)
+    await h.tick(10)
+    await h.session.seek(25)
+    h.playing(position=25)
+    await h.tick(5 + offset - 0.001)
+    assert h.session.round_id == 1
+    await h.tick(0.001)
+    assert h.session.round_id == 2
 
 
 async def confirmed(h):
