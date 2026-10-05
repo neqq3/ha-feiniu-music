@@ -395,9 +395,13 @@ async def test_native_playback_options_are_per_proxy_persistent_and_do_not_resta
         patch.object(second.output, "send", wraps=second.output.send) as second_send,
     ):
         flow = await playback_options(hass, entry, first)
-        assert flow["data_schema"]({}) == asdict(first.control.profile)
+        assert flow["data_schema"]({}) == {
+            k: v for k, v in asdict(first.control.profile).items() if k != "unconfirmed_end"
+        }
         settings = asdict(OutputProfile(confirmation="delivery", play_once=True, weak_end=True))
-        result = await hass.config_entries.options.async_configure(flow["flow_id"], settings)
+        result = await hass.config_entries.options.async_configure(
+            flow["flow_id"], {k: v for k, v in settings.items() if k != "unconfirmed_end"}
+        )
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
         first_send.assert_not_called()
@@ -452,9 +456,13 @@ async def test_card_and_native_settings_share_state_without_overwriting_unedited
     )
     assert (await ws.receive_json())["success"]
     flow = await playback_options(hass, entry, first)
-    assert flow["data_schema"]({}) == asdict(
-        OutputProfile(confirmation="reported", end_state="off", play_once=True)
-    )
+    assert flow["data_schema"]({}) == {
+        k: v
+        for k, v in asdict(
+            OutputProfile(confirmation="reported", end_state="off", play_once=True)
+        ).items()
+        if k != "unconfirmed_end"
+    }
     hass.config_entries.options.async_abort(flow["flow_id"])
     assert second.control.profile == OutputProfile(confirmation="reported")
     assert second.saved.lyric_offset == 0 and first.saved.lyric_offset == 2
@@ -479,6 +487,41 @@ async def test_native_profile_can_be_configured_offline_and_cancel_does_not_chan
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert player.control.profile.play_once
     assert all(not output.calls for output in outputs)
+
+
+async def test_native_compatibility_step_is_conditional_and_saves_atomically(
+    hass, installed, entry
+):
+    manager, outputs = installed
+    player = next(iter(manager.entities.values()))
+    flow = await playback_options(hass, entry, player)
+    form = flow["data_schema"]({})
+    assert "unconfirmed_end" not in form and form["feedback_mode"] == "standard"
+    before = player.control.profile
+    step = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**form, "feedback_mode": "compatibility"}
+    )
+    assert step["step_id"] == "unconfirmed_end"
+    assert step["data_schema"]({}) == {"estimated": False}
+    assert player.control.profile == before
+    hass.config_entries.options.async_abort(step["flow_id"])
+    assert player.control.profile == before
+    flow = await playback_options(hass, entry, player)
+    step = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**form, "feedback_mode": "compatibility"}
+    )
+    result = await hass.config_entries.options.async_configure(step["flow_id"], {"estimated": True})
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert player.control.profile.feedback_mode == "compatibility"
+    assert player.control.profile.unconfirmed_end == "estimated_duration"
+    assert player.control.feedback_mode == "standard"  # Next round, not retroactive.
+    assert all(not output.calls for output in outputs)
+    flow = await playback_options(hass, entry, player)
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**flow["data_schema"]({}), "feedback_mode": "standard"}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert player.control.profile.unconfirmed_end == "manual"
 
 
 async def test_native_profile_rejects_removed_output_and_handles_empty_selection(

@@ -30,6 +30,46 @@ layouts, touch controls, search, lyrics, and the visual editor using synthetic H
 It also runs the browse lifecycle checks with `CARD_BROWSER_ENGINE=webkit`, using
 touch/mobile emulation. This is not a physical iPhone or HA Companion WebView test.
 
+## Playback feedback implementation — 2026-10-05 (local, not release acceptance)
+
+Baseline: `6b8de851dee7376b26ccdb7cdc95ee3e30b9cd5b`, branch
+`dev/browse-performance-checks`. No real HA, NAS or speakers were changed.
+
+The added controlled-clock suite uses real HA `State` objects, a synthetic output
+adapter and controlled service/wait futures. It covers all 24 legacy profiles,
+compatibility through late confirmation and pause/resume, exact duration + 5-second
+continuation, cancellation races, stale identities, transport/error distinctions,
+queue modes, seek gating and privacy. Migration transforms cover all 24 profiles,
+offline/deselected records, account isolation, corruption and idempotence. Native HA
+Store and options-flow tests are also added to the normal Linux suite.
+
+Local Windows / HA 2026.9.4 / Python 3.14 supplemental checks:
+
+```powershell
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'
+.venv-feedback/Scripts/python.exe -m pytest --noconftest -p pytest_asyncio.plugin -p no:cacheprovider tests/test_feedback_compatibility.py tests/test_feedback_storage.py tests/test_timeline.py
+```
+
+Result: 197 passed (149 session/feature/privacy, 30 migration transforms, 18 existing
+timeline tests). This explicitly bypasses the HA pytest plugin and is **not** the
+full HA integration suite. An additional local differential run loaded the original
+baseline session code from Git: all 72 baseline/current pairs matched across
+24 profiles and three traces (fast confirmation/natural end, strict timeout/late
+feedback, pause/resume/seek/stop).
+
+The full HA 2026.9.4 pytest plugin cannot load on this Windows host: its runner
+imports Linux `fcntl`. The HA 2025.12.2 environment also cannot finish its pinned
+dependency install because `lru-dict==1.3.0` needs an unavailable Windows C++ compiler.
+Neither Linux matrix job has run for these changes; existing historical CI results
+below do not validate this patch. No dependency pins were loosened, OS interfaces
+stubbed, tests removed or remote deployment used to disguise these limits.
+
+The frontend now runs `feedback-check.mjs` on **both** Chromium and WebKit, covering
+English/Chinese settings, compatibility-only opt-in, runtime notices, disabled
+seek/lyric jumps and late confirmation. The regular Chromium suite and existing
+WebKit browse/artist regressions remain enabled. Run the Linux matrix before
+committing/releasing this implementation.
+
 ## Paged browsing and lifecycle — 2026-10-04
 
 Regression tests were committed before the implementation: both HA matrix jobs

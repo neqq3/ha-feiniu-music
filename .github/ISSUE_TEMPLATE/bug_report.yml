@@ -50,6 +50,11 @@ body:
     validations:
       required: true
   - type: textarea
+    id: playback_feedback
+    attributes:
+      label: 播放反馈设置与现象 / Playback feedback settings and observations
+      description: 请说明标准或兼容模式、是否开启估算续播、卡片提示，以及是否在音箱旁确认发声。first_byte/EOF 只表示传输，不证明发声或播完。 / Include Standard or Compatibility mode, estimated continuation on/off, card status, and whether you personally heard the speaker. first_byte/EOF describe transport, not audible playback or completion. Diagnostics include configured/effective modes, confirmation stage, estimated timer status and bounded reasons; do not paste private URLs or account details.
+  - type: textarea
     id: diagnostics
     attributes:
       label: 诊断信息 / Diagnostics

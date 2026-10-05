@@ -9,6 +9,7 @@ import {checkCompact} from './compact-check.mjs';
 import {checkCompactLyrics} from './compact-lyrics-check.mjs';
 import {checkBrowse} from './browse-check.mjs';
 import {checkArtistBrowse} from './artist-browse-check.mjs';
+import {checkFeedback} from './feedback-check.mjs';
 const require = createRequire(import.meta.url);
 const {chromium,webkit} = require('playwright');
 async function showTab(card,name){if(await card.locator('#now-back').isVisible())await card.locator('#now-back button').click();if(name==='正在播放')await card.locator('#mini-open').click();else await card.getByRole('tab',{name,exact:true}).click();}
@@ -65,6 +66,7 @@ try{
  browser=await (process.env.CARD_BROWSER_ENGINE==='webkit'?webkit:chromium).launch({headless:true, ...(process.env.CARD_BROWSER_CHANNEL ? {channel:process.env.CARD_BROWSER_CHANNEL} : {})});
  await checkBrowse(browser,`http://127.0.0.1:${server.address().port}`);
  await checkArtistBrowse(browser,`http://127.0.0.1:${server.address().port}`);
+ await checkFeedback(browser,`http://127.0.0.1:${server.address().port}`);
  if(process.env.CARD_BROWSER_ENGINE!=='webkit'){
  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(e.stack);});page.setDefaultTimeout(5000);page.on('console',m=>console.log('Browser:',m.type(),m.text()));page.on('requestfailed',r=>console.log('Request failed:',r.failure()?.errorText));
  await page.setViewportSize({width:390,height:844});await page.goto(`http://127.0.0.1:${server.address().port}`);
@@ -157,12 +159,12 @@ try{
  await showTab(first,'播放队列');
  await first.locator('#content .row').nth(1).getByRole('button',{name:'向后移动',exact:true}).click();
  assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/edit_queue').at(-1).item_id),'a-1');
- await first.getByRole('button',{name:'播放与歌词设置',exact:true}).click();await first.locator('#offset').fill('1.5');await first.getByRole('button',{name:'保存',exact:true}).click();
+ await first.getByRole('button',{name:'播放反馈与续播',exact:true}).click();await first.locator('#offset').fill('1.5');await first.getByRole('button',{name:'保存',exact:true}).click();
  assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).lyric_offset),1.5);
  assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='feiniu_music/preferences').at(-1).profile),undefined,'Lyric-only saves must not overwrite playback settings');
  // Native options update HA state without changing the queue revision.
  await page.evaluate(()=>{const a=hass.states['media_player.feiniu_a'].attributes;a.playback_profile={confirmation:'reported',end_state:'off',play_once:true,weak_end:false};document.querySelector('feiniu-music-card').hass=hass;});
- await first.getByRole('button',{name:'播放与歌词设置',exact:true}).click();
+ await first.getByRole('button',{name:'播放反馈与续播',exact:true}).click();
  assert.equal(await first.locator('#confirmation').inputValue(),'reported');
  assert.equal(await first.locator('#end-state').inputValue(),'off');
  assert.equal(await first.locator('#play-once').isChecked(),true);

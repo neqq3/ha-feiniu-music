@@ -1,6 +1,7 @@
 """Registry identity and native HA storage; neither restoration nor rename sends audio."""
 
 from copy import deepcopy
+from itertools import product
 
 import pytest
 from homeassistant.components.media_player import MediaPlayerEntityFeature as Feature
@@ -161,7 +162,7 @@ async def test_store_roundtrip_uses_ha_store_with_no_transport_grants(hass, hass
     assert restored[binding.key].position == 12.5
     assert restored[binding.key].lyric_offset == -0.25
     stored = hass_storage[storage.store.key]
-    assert stored["version"] == 1 and "outputs" in stored["data"]
+    assert stored["version"] == 2 and "outputs" in stored["data"]
     assert all(value not in str(stored) for value in ("authSig", "Cookie", "http://", "monotonic"))
     assert restored[binding.key].snapshot() == saved_snapshot(restored[binding.key])
 
@@ -212,3 +213,41 @@ def test_persisted_cross_account_source_and_secret_fields_are_rejected():
     data["url"] = "http://invalid/?authSig=SENTINEL"
     with pytest.raises(QueueError):
         SavedSession.restore(data, "account-one")
+
+
+@pytest.mark.parametrize(
+    "values",
+    list(
+        product(("delivery", "reported"), (False, True), ("idle", "paused", "off"), (False, True))
+    ),
+)
+async def test_real_ha_store_migrates_all_profiles_and_preserves_offline_outputs(
+    hass, hass_storage, values
+):
+    from .test_feedback_storage import legacy_record
+
+    for account in ("account-one", "account-two"):
+        storage = QueueStorage(hass, account)
+        original = {
+            "outputs": dict(
+                legacy_record(account, output, OutputProfile(*values))
+                for output in ("selected", "offline")
+            )
+        }
+        hass_storage[storage.store.key] = {
+            "version": 1,
+            "minor_version": 1,
+            "key": storage.store.key,
+            "data": deepcopy(original),
+        }
+        restored = await storage.load()
+        assert len(restored) == 2
+        assert hass_storage[storage.store.key]["version"] == 2
+        again = await QueueStorage(hass, account).load()
+        assert {k: v.snapshot() for k, v in again.items()} == {
+            k: v.snapshot() for k, v in restored.items()
+        }
+        for key, value in restored.items():
+            expected = original["outputs"][key]
+            expected["profile"].update(feedback_mode="standard", unconfirmed_end="manual")
+            assert value.snapshot() == expected

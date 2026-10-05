@@ -149,7 +149,7 @@ cards:
 
 ### 歌词与队列
 
-同步歌词可以手动滚动查看。点击文字会将那一句居中，点击右侧时间按钮才会跳转播放。歌词不同步时，可以用提前／延后按钮调整，也可以在“播放与歌词设置”中输入偏移量。
+同步歌词可以手动滚动查看。点击文字会将那一句居中，点击右侧时间按钮才会跳转播放。歌词不同步时，可以用提前／延后按钮调整，也可以在“播放反馈与续播”中输入偏移量。
 
 纯文本歌词也能手动滚动阅读，但没有时间轴，不能自动跟随播放或按句跳转。
 
@@ -165,9 +165,23 @@ cards:
 
 不同音箱的起播和结束反馈可能不同。如果遇到加载后不播放、播完不切歌等情况，打开：
 
-**设置 → 设备与服务 → 飞牛音乐 → 配置 → 起播与续播设置**
+**设置 → 设备与服务 → 飞牛音乐 → 配置 → 播放反馈与续播**
 
 先选中对应的飞牛播放器，再调整起播确认、结束状态等选项。每台播放器单独保存设置，不需要安装卡片也能配置。
+
+默认使用**标准模式**：等待当前媒体的播放反馈，确认超时后结束本轮并撤销音频流，音箱已缓存的音频可能继续播放。现有设置升级后仍保持此行为。
+
+如果音箱已经接收播放请求，但状态反馈经常延迟或一直停在暂停，可以对这台输出开启**兼容：未确认时保持会话**。确认超时后，卡片会显示“播放未确认 · 会话已保留”，进度标明为估算。仍可暂停、恢复或手动切歌；未确认前不能拖动进度或点击歌词跳转。恢复只发送播放动作，不重新加载整首。即使本轮后来收到确认，暂停和恢复仍保留兼容处理。
+
+兼容模式下还可以单独开启**未确认时按估算时长自动续播**，默认关闭。必须有成功返回的播放请求、本轮首次音频交付和有效时长才会计时：以请求返回和首次交付中较晚的时间为起点，等待**歌曲时长 + 5 秒**。通过飞牛暂停会冻结计时，恢复后继续剩余时间；迟到的播放确认会取消估算续播，改用正常结束判断。只有 HEAD、GET 或传输 EOF 不会触发切歌，整首提前缓存完也不会直接跳过。
+
+估算不能保证音箱真正播完：启动延迟、缓冲、时长误差，或没有上报的外部 App／音箱按键暂停，都可能让切歌提前或延后。5 秒只是余量，不是可靠的缓冲上界；`first_byte` 也不证明已经发声。没有媒体标识或来源变化时，外部接管无法可靠识别。
+
+**兼容模式中的 HA `playing` 可能只是飞牛估计正在播放。** 要求设备已反馈确认的自动化，请判断 `confirmation_stage == confirmed`。它只表示本轮曾满足起播规则，不保证之后每个状态都可靠。卡片同时显示估算进度或“已请求暂停 · 设备状态未确认”。
+
+起播确认的两个选项都要求当前媒体关联和输出报告“播放中”；默认还要求本轮音频传输或至少两个有效新进度样本。“结束候选状态”和放宽结束判断只适用于已确认播放的状态转换，不会启用估算续播。“加载后补发一次播放”也只在尚未确认、媒体可识别且支持播放动作时执行一次，不循环重试。
+
+播放反馈模式和估算续播开关在**下一轮播放**生效，保存不打断当前歌曲；原有四项设置仍即时生效。队列存储会从 v1 升级为 v2，保留全部输出的队列、顺序、循环、随机、原生保存位置及歌词偏移。重启只恢复队列，不自动播放或恢复估算计时。回滚旧版前请备份 `.storage/feiniu_music.queues.*` 并使用升级前备份；旧版不能直接读取 v2 文件，勿直接改版本号。
 
 暂停、音量、进度跳转和音频格式支持取决于底层音箱及其 HA 集成。音频由音箱解码，本集成不提供转码。
 
@@ -200,6 +214,8 @@ cards:
 
 在 **设置 → 设备与服务 → FeiNiu Music** 中，打开对应账号条目的菜单，选择 **下载诊断信息（Download diagnostics）**。诊断包含输出能力、播放确认、取流计数和最近的有限事件；不包含密码、账号名、歌曲地址或歌词，主机名和实体 ID 会脱敏。匿名标识只用于关联同一次 HA 运行中的诊断与日志，重启后会变化。
 
+播放问题请同时说明配置的模式、当前生效模式、确认阶段和是否开启估算续播。诊断会保留起播超时降级、迟到确认、估算续播的调度／取消及受控阻止原因。`first_byte` 只说明开始交付响应内容，`EOF` 只说明这次请求传完；两者都不能证明音箱发声或播完。
+
 需要进一步排查时，在集成菜单选择 **启用调试日志（Enable debug logging）**，复现一次，再**禁用调试日志并下载日志**。HA 已有这套功能，无需额外日志工具。操作位置可参考 [HA 官方说明](https://www.home-assistant.io/docs/configuration/troubleshooting/#debug-logs-and-diagnostics)。
 
 如果首次添加就失败，还没有账号条目，可以先提供错误截图和上述版本信息。需要日志时，按 [HA Logger 文档](https://www.home-assistant.io/integrations/logger/#action-set_level)，在“开发者工具 → 动作”中临时运行：
@@ -221,6 +237,20 @@ data:
 项目使用 [Apache-2.0](LICENSE) 许可证。字体、品牌图案及代码来源说明见 [NOTICE](NOTICE)。
 
 ## English overview
+
+### Playback feedback and continuation
+
+Each output defaults to **Standard** feedback with manual continuation when unconfirmed. Standard keeps the existing startup timeout: FeiNiu ends the round and revokes its stream; audio already buffered by the speaker may continue. Both confirmation choices require current-media association **and a playing report**. The default additionally requires delivery for this round or at least two valid fresh position samples. These software observations do not prove sound.
+
+Choose **Compatibility: keep the session when unconfirmed** for delayed or missing feedback. After a successful play request and confirmation timeout, FeiNiu retains the round and labels playback unconfirmed and position estimated. Pause freezes the local clock; resume sends `media_play` without reloading the track, including after late confirmation. Seeking and lyric jumps are disabled until confirmed. A local pause/resume request is not proof of the physical speaker's state.
+
+**Advance by estimated duration when playback is unconfirmed** is a separate, off-by-default compatibility option. It requires a successful command return, first-byte delivery for the current round and a finite positive duration. Using a monotonic clock, the deadline is the later of command return and first-byte delivery, plus **duration + 5 seconds**. FeiNiu pauses suspend the clock; resume preserves its remaining time. Late confirmation cancels estimation permanently for that round and restores normal completion rules. HEAD, GET, EOF and early whole-file caching never directly mean playback has finished.
+
+Delayed starts, buffering, inaccurate durations and unreported external pauses may still cause early or late changes. The 5-second grace is not a reliable buffering bound; `first_byte` is not audible proof. Unknown media identity limits attribution, and takeover without observable identity/source changes cannot reliably be detected. **HA `playing` can be an assumed state in compatibility mode.** Automations requiring device confirmation should check `confirmation_stage == confirmed`; this means the round was once confirmed, not that all later reports are reliable.
+
+Feedback mode and estimated continuation take effect on the **next playback round**. The four existing preferences keep immediate-update behavior. Candidate end-state/weak-end options apply only after confirmed playback and can mistake manual pause/stop for completion; they do not enable estimated continuation. Extra Play is sent at most once while unconfirmed, with matched media and PLAY support.
+
+Queue storage migrates from v1 to v2 while preserving all outputs, queues, order, repeat/shuffle, saved native position and lyric offset. Restart restores queues only, without playback or timers. Before rolling back, back up `.storage/feiniu_music.queues.*` and restore a pre-upgrade backup: old versions cannot read v2 directly. Do not merely change its version number. This change does not address transient DLNA idle reports or modify Xiaomi Miot upstream behavior.
 
 An unofficial Home Assistant integration for FeiNiu Music. Browse your library, **play through speakers already connected to Home Assistant**, and manage a separate queue for each output. **Multiple FeiNiu Music accounts can be connected at the same time**; add the integration again for each additional account. The integration also provides a native HA media source (`media_source`) for media browsing and automations without the custom card.
 
@@ -260,6 +290,8 @@ Some corresponding speaker entities in official **Xiaomi Home** currently lack s
 Use the [bug report form](https://github.com/neqq3/ha-feiniu-music/issues/new?template=bug_report.yml) with your **HA Core version, FeiNiu Music integration version, problem stage, reproduction steps, actual and expected results**, and diagnostics. For connection issues, also include the NAS music-service version. Screenshots and debug logs are optional.
 
 Under **Settings → Devices & services → FeiNiu Music**, open the affected account entry menu and select **Download diagnostics**. Diagnostics include output capabilities, playback confirmation, stream counters and bounded recent events. Credentials, account names, song URLs and lyrics are excluded; hosts and entity IDs are redacted. Anonymous references correlate diagnostics and logs only within one HA process and change after restart.
+
+For playback issues, include configured and effective modes, confirmation stage and whether estimated continuation is enabled. Bounded diagnostics record timeout degradation, late confirmation, estimation scheduling/cancellation and controlled blocking reasons. `first_byte` only means response delivery began; `EOF` only means that HTTP request finished transferring. Neither proves audible playback or completion.
 
 If needed, select **Enable debug logging** from the integration menu, reproduce once, then **disable debug logging and download the log** using [HA's built-in workflow](https://www.home-assistant.io/docs/configuration/troubleshooting/#debug-logs-and-diagnostics). No extra logging tool is needed.
 

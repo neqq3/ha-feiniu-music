@@ -67,30 +67,39 @@
         "title": "FeiNiu Music settings",
         "menu_options": {
           "outputs": "Select output players",
-          "playback": "Playback compatibility"
+          "playback": "Playback feedback and continuation"
         }
       },
       "playback": {
-        "title": "Choose a FeiNiu player",
+        "title": "Playback feedback and continuation",
         "description": "Each FeiNiu player has independent start and end detection settings. Other outputs are unaffected. The music card is not required.",
         "data": {
           "output": "FeiNiu player"
         }
       },
       "playback_profile": {
-        "title": "Playback compatibility",
-        "description": "**{player}**\n\n`{entity_id}`\n\nApplies only to this player. Saving does not restart playback, clear the queue or change speaker firmware settings. Defaults use audio delivery or fresh progress to confirm playback and idle to detect completion. Paused/off and weak feedback can mistake manual pauses or stops for completion; enable only for verified devices.",
+        "title": "Playback feedback and continuation",
+        "description": "**{player}**\n\n`{entity_id}`\n\nThese preferences apply only to this player. Saving does not restart playback or clear its queue. Feedback mode and estimated continuation take effect on the next playback round; other preferences still take effect immediately.",
         "data": {
-          "confirmation": "Start confirmation",
-          "end_state": "Output state on completion",
-          "play_once": "Send one extra play after loading",
-          "weak_end": "Allow end-state continuation without reliable progress"
+          "feedback_mode": "Playback feedback mode",
+          "confirmation": "Startup confirmation",
+          "end_state": "Candidate end state",
+          "play_once": "Send one extra Play after loading",
+          "weak_end": "Allow end-state transition continuation after confirmed playback"
         },
         "data_description": {
-          "confirmation": "Default: audio delivery or fresh device progress. Trust playing reports only when the output reports reliably.",
-          "end_state": "Default: idle. Paused and off often reflect user actions rather than natural completion.",
-          "play_once": "Off by default. Enable only for outputs that need another play command after loading.",
-          "weak_end": "Off by default. Continuing on end state alone can mistake manual stops for completion."
+          "feedback_mode": "Standard ends the round and revokes its stream on confirmation timeout; buffered audio may continue. Compatibility keeps the round when the play request succeeds but startup feedback is delayed or missing. This does not verify audible playback. Controls from other apps or speaker buttons may not stay in sync. Compatibility offers estimated continuation in the next step.",
+          "confirmation": "Both choices require current-media association and a playing report. The default also requires delivery for this round or at least two valid fresh position samples. Software feedback does not prove audible playback. Use reported-only confirmation only with reliable output feedback.",
+          "end_state": "Only applies to confirmed playback transitioning from playing to this state. Default completion checks also require matching media and native progress near the end. Paused or off may instead reflect a user action.",
+          "play_once": "Send at most one extra Play while this round is unconfirmed, only if its media matches and the output supports PLAY. This does not loop or retry.",
+          "weak_end": "Only applies after startup has been confirmed. May mistake manual pause or stop for completion. Does not enable duration-based continuation for unconfirmed playback."
+        }
+      },
+      "unconfirmed_end": {
+        "title": "Playback feedback and continuation",
+        "description": "Off by default. Requires a successful play request, first-byte delivery for this round and a valid duration. The monotonic clock starts at the later of command return and first-byte delivery; continuation waits the track duration plus 5 seconds. Delayed starts, buffering, inaccurate durations or unreported external pauses may cause early or late changes. Delivery is not proof of sound. Takes effect on the next playback round.",
+        "data": {
+          "estimated": "Advance by estimated duration when playback is unconfirmed"
         }
       }
     },
@@ -125,8 +134,8 @@
   "selector": {
     "confirmation": {
       "options": {
-        "delivery": "Audio delivery or fresh progress (default)",
-        "reported": "Trust the output playing report"
+        "delivery": "Playing report plus audio delivery or valid progress (default)",
+        "reported": "Use the output’s playing report"
       }
     },
     "end_state": {
@@ -135,6 +144,17 @@
         "paused": "Paused",
         "off": "Off"
       }
+    },
+    "feedback_mode": {
+      "options": {
+        "standard": "Standard (default)",
+        "compatibility": "Compatibility: keep the session when unconfirmed"
+      }
+    }
+  },
+  "exceptions": {
+    "playback_unconfirmed": {
+      "message": "Playback is unconfirmed, so seeking is not available reliably yet."
     }
   }
 }

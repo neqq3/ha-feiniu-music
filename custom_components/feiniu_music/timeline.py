@@ -54,6 +54,9 @@ class Timeline:
         self.started_at = self.utcnow()
         self.seek_target: float | None = None
         self.seek_started: datetime | None = None
+        self._estimate_elapsed = 0.0
+        self._estimate_since: float | None = None
+        self._estimate_started = False
 
     @property
     def source(self) -> str:
@@ -70,6 +73,40 @@ class Timeline:
         self.started_at = self.utcnow()
         self.seek_target = None
         self.seek_started = None
+        self._estimate_elapsed = 0.0
+        self._estimate_since = None
+        self._estimate_started = False
+
+    def start_estimate(self, zero: float) -> None:
+        """Delivery/command zero, not proof that a speaker has started making sound."""
+        if not self._estimate_started:
+            self._estimate_started = True
+            self._estimate_since = zero
+
+    def estimated_elapsed(self) -> float:
+        """Unclamped active time: the end grace must survive pauses after duration."""
+        return self._estimate_elapsed + (
+            max(0, self.clock() - self._estimate_since) if self._estimate_since is not None else 0
+        )
+
+    def freeze_estimate(self) -> None:
+        self._estimate_elapsed = self.estimated_elapsed()
+        self._estimate_since = None
+
+    def resume_estimate(self) -> None:
+        if self._estimate_started and self._estimate_since is None:
+            self._estimate_since = self.clock()
+
+    def show_estimate(self, *, moving: bool) -> None:
+        self._set(self.estimated_elapsed(), "playing" if moving else "paused", "estimated")
+        self.state = "playing" if moving else "paused"
+        self.reason = "unconfirmed_estimate"
+
+    def resume(self) -> None:
+        position = self.position()
+        if position is not None:
+            self._set(position, "playing", self.source)
+        self.state = "playing"
 
     def position(self) -> float | None:
         if self.anchor is None:

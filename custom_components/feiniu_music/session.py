@@ -23,6 +23,7 @@ from .timeline import Timeline
 START_TIMEOUT = 20.0
 COMPAT_PLAY_DELAY = 2.0
 SEEK_TIMEOUT = 5.0
+ESTIMATED_END_GRACE = 5.0
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -44,6 +45,8 @@ class OutputProfile:
     play_once: bool = False
     end_state: str = "idle"
     weak_end: bool = False
+    feedback_mode: str = "standard"
+    unconfirmed_end: str = "manual"
 
     def __post_init__(self) -> None:
         if self.confirmation not in {"delivery", "reported"}:
@@ -52,6 +55,12 @@ class OutputProfile:
             raise ValueError("Invalid end-state policy")
         if type(self.play_once) is not bool or type(self.weak_end) is not bool:
             raise ValueError("Invalid compatibility flags")
+        if self.feedback_mode not in {"standard", "compatibility"}:
+            raise ValueError("Invalid playback feedback mode")
+        if self.unconfirmed_end not in {"manual", "estimated_duration"}:
+            raise ValueError("Invalid unconfirmed continuation policy")
+        if self.feedback_mode == "standard" and self.unconfirmed_end != "manual":
+            raise ValueError("Estimated continuation requires compatibility mode")
 
 
 def _identity_url(url: str) -> tuple:
@@ -101,6 +110,19 @@ class PlaybackSession:
         self.started = False
         self.identity = "unknown"
         self.confirmation = "unconfirmed"
+        self.confirmation_stage: str | None = None
+        # Only the two new strategy choices take effect on the next round. The four
+        # existing preferences deliberately retain their immediate-update semantics.
+        self.feedback_mode = "standard"
+        self.unconfirmed_end = "manual"
+        self._command_return: float | None = None
+        self._first_byte: float | None = None
+        self._before_state: State | None = None
+        self._local_resume = False
+        self._estimate_buffering = False
+        self._estimated_end: asyncio.TimerHandle | asyncio.Handle | None = None
+        self._estimate_token: object | None = None
+        self.estimated_end_blocked_reason: str | None = None
         self._expected: str | None = None
         self._retired: deque[str] = deque(maxlen=8)
         self._before_command: str | None = None
@@ -124,6 +146,116 @@ class PlaybackSession:
     @property
     def owned(self) -> bool:
         return self.leases.owns(self.output.binding.key, self)
+
+    @property
+    def compatible(self) -> bool:
+        return self.feedback_mode == "compatibility"
+
+    @property
+    def position_visible(self) -> bool:
+        return self.started or (
+            self.compatible and self.owned and self.confirmation_stage == "assumed"
+        )
+
+    def _cancel_estimated(self, reason: str) -> None:
+        self._estimate_token = None
+        if self._estimated_end is not None:
+            self._estimated_end.cancel()
+            self._estimated_end = None
+            self.record("estimated_end_cancelled", reason)
+
+    def _estimate_blocked(self) -> str | None:
+        if not self.owned or self.closed:
+            return "lost_owner"
+        if not self.compatible or self.unconfirmed_end != "estimated_duration":
+            return "disabled"
+        if self.confirmation_stage == "confirmed":
+            return "confirmed"
+        if self.confirmation_stage not in {"awaiting", "assumed"}:
+            return "inactive"
+        if self.intent == "seek" or self.timeline.seek_target is not None:
+            return "seek_pending"
+        if self.intent != "play":
+            return "paused" if self.intent == "pause" else "inactive"
+        if self._estimate_buffering:
+            return "buffering"
+        if self._ended_round == self.round_id or self.queue.current is None:
+            return "inactive"
+        if self._command_return is None:
+            return "command_pending"
+        if self._first_byte is None:
+            return "no_delivery"
+        if self.timeline.duration is None:
+            return "duration_unknown"
+        return None
+
+    def _sync_estimated(self) -> None:
+        """One cancellable handle; callbacks also validate the complete round token."""
+        if not self.compatible:
+            return
+        if self._command_return is not None and self._first_byte is not None:
+            self.timeline.start_estimate(max(self._command_return, self._first_byte))
+            if self.intent != "play" or self._estimate_buffering:
+                self.timeline.freeze_estimate()
+        blocked = self._estimate_blocked()
+        if blocked != self.estimated_end_blocked_reason:
+            self.estimated_end_blocked_reason = blocked
+            if blocked is not None and self.unconfirmed_end == "estimated_duration":
+                self.record("estimated_end_blocked", blocked)
+        if blocked is not None:
+            self._cancel_estimated(blocked)
+            return
+        if self._estimated_end is not None:
+            return
+        token = self._estimate_token = object()
+        generation, round_id, item_id = self.generation, self.round_id, self.queue.current_id
+
+        def eligible() -> bool:
+            return (
+                token is self._estimate_token
+                and self._valid(generation)
+                and round_id == self.round_id
+                and item_id == self.queue.current_id
+                and self._estimate_blocked() is None
+            )
+
+        def finish() -> None:
+            if not eligible():
+                if token is self._estimate_token:
+                    self._cancel_estimated(self._estimate_blocked() or "stale_round")
+                return
+            self._estimated_end = None
+            self._estimate_token = None
+            self._finish_round_once("estimated_end")
+
+        def due() -> None:
+            if eligible():
+                # Give already queued explicit intents and output feedback priority
+                # over inference in this event-loop turn, then check every guard again.
+                self._estimated_end = self.hass.loop.call_soon(finish)
+            elif token is self._estimate_token:
+                self._cancel_estimated(self._estimate_blocked() or "stale_round")
+
+        assert self.timeline.duration is not None
+        remaining = self.timeline.duration + ESTIMATED_END_GRACE - self.timeline.estimated_elapsed()
+        self._estimated_end = self.hass.loop.call_later(max(0, remaining), due)
+        self.record("estimated_end_armed", "duration_plus_grace")
+
+    def _finish_round_once(self, reason: str) -> None:
+        if self._ended_round == self.round_id:
+            return
+        self._ended_round = self.round_id
+        if reason == "estimated_end":
+            # A short track can finish while its startup waiter is still pending.
+            # Invalidate that waiter even at the end of the queue.
+            self._invalidate("play")
+        else:
+            self._cancel_estimated("confirmed")
+        self.phase, self.reason, self.started = "idle", reason, False
+        self.record("end", reason)
+        self._advance = self.hass.async_create_background_task(
+            self._auto_advance(self.generation), "FeiNiu natural queue advance"
+        )
 
     def record(self, event: str, reason: str) -> None:
         """Only controlled labels and numbers; never raw exception text or media URLs."""
@@ -174,6 +306,7 @@ class PlaybackSession:
         self._notify()
 
     def _invalidate(self, intent: str) -> int:
+        self._cancel_estimated(intent)
         self.generation += 1
         self.intent = intent
         current = asyncio.current_task()
@@ -200,6 +333,7 @@ class PlaybackSession:
             self._retired.append(self._expected)
         self._expected = None
         self.started = self._issued = False
+        self.confirmation_stage = None
         self.phase, self.reason = "loading", "resolving_track"
         self.timeline.freeze("changing_track", forget=True)
 
@@ -309,6 +443,13 @@ class PlaybackSession:
     async def start(self, *, context: Context | None = None) -> None:
         self._context = context
         target = self.output.state
+        if self.compatible and self.owned and self._issued and self._command_return is not None:
+            if self.intent == "pause" or self.phase == "paused":
+                generation = self._invalidate("play")
+                await self._await_operation(generation, self._resume(generation))
+                return
+            if self.intent == "play":
+                return
         if self.owned and self.started and target and self._matches(target) == "matched":
             if target.state == "paused":
                 generation = self._invalidate("play")
@@ -327,11 +468,33 @@ class PlaybackSession:
         await self._await_operation(generation, self._load(generation))
 
     async def _resume(self, generation: int) -> None:
+        if self.compatible and not self.output.features & Feature.PLAY:
+            raise ServiceValidationError("Output cannot resume at this time")
         self.phase, self.reason = "loading", "resuming"
+        self._local_resume = self.compatible
         self.changed()
         await self._send(generation, "media_play")
-        await asyncio.wait_for(self._ready.wait(), START_TIMEOUT)
+        if self.compatible:
+            if self._estimate_buffering:
+                self.phase, self.reason = "buffering", "output_buffering"
+            elif self._local_resume:
+                self.phase, self.reason = "playing", "resume_requested"
+            if self.confirmation_stage == "awaiting":
+                self.confirmation_stage = "assumed"
+            if not self._estimate_buffering:
+                self.timeline.resume_estimate()
+                if self.confirmation_stage == "confirmed":
+                    self.timeline.resume()
+                else:
+                    self.timeline.show_estimate(moving=True)
+            self._sync_estimated()
+            self.changed()
+            return
+        await self._wait_ready(START_TIMEOUT)
         self._check(generation)
+
+    async def _wait_ready(self, seconds: float) -> None:
+        await asyncio.wait_for(self._ready.wait(), seconds)
 
     async def _send(self, generation: int, service: str, data: dict | None = None) -> None:
         self._check(generation)
@@ -348,6 +511,11 @@ class PlaybackSession:
         self.cancel_streams()
         self.round_id += 1
         self._prepare_load()
+        self.feedback_mode = self.profile.feedback_mode
+        self.unconfirmed_end = self.profile.unconfirmed_end
+        self._command_return = self._first_byte = None
+        self._local_resume = self._estimate_buffering = False
+        self.estimated_end_blocked_reason = None
         self._audio, self.started, self._issued = False, False, False
         self._raw_samples = 0
         self.stream_counts = {}
@@ -365,11 +533,13 @@ class PlaybackSession:
         self.timeline.reset(self.round_id, request.duration)
         self._expected = request.url
         target = self.output.state
+        self._before_state = target
         self._source = self._source_of(target) if target else None
         value = target.attributes.get("media_content_id") if target else None
         self._before_command = value if isinstance(value, str) else None
         self._issued = True
         self._controlled = True
+        self.confirmation_stage = "awaiting"
         await self._send(
             generation,
             "play_media",
@@ -379,12 +549,14 @@ class PlaybackSession:
                 "extra": request.extra,
             },
         )
+        self._command_return = self.timeline.clock()
+        self._sync_estimated()
         # Events were processed even during the command; inspect the final snapshot too.
         self.observe(None, self.output.state)
         self._check(generation)
         if self.profile.play_once and not self._ready.is_set():
             try:
-                await asyncio.wait_for(self._ready.wait(), COMPAT_PLAY_DELAY)
+                await self._wait_ready(COMPAT_PLAY_DELAY)
             except TimeoutError:
                 self._check(generation)
                 target = self.output.state
@@ -393,8 +565,21 @@ class PlaybackSession:
                         self.record("compatibility", "one_standard_play_after_load")
                         await self._send(generation, "media_play")
         try:
-            await asyncio.wait_for(self._ready.wait(), START_TIMEOUT)
+            await self._wait_ready(START_TIMEOUT)
         except TimeoutError:
+            if self.compatible:
+                self._check(generation)
+                if self.confirmation_stage == "confirmed":
+                    return
+                self.confirmation_stage = "assumed"
+                self.phase, self.reason = "playing", "start_unconfirmed_retained"
+                self.timeline.show_estimate(moving=not self._estimate_buffering)
+                if self._estimate_buffering:
+                    self.phase = "buffering"
+                self.record("timeout_degraded", "start_unconfirmed_retained")
+                self._sync_estimated()
+                self.changed()
+                return
             self.reason = "start_unconfirmed"
             self.record("timeout", "start_unconfirmed")
             raise HomeAssistantError("Output did not confirm this playback round") from None
@@ -424,7 +609,10 @@ class PlaybackSession:
         self.record("stream", event)
         if event == "first_byte":
             self._audio = True
+            if self._first_byte is None:
+                self._first_byte = self.timeline.clock()
             self.observe(None, self.output.state)
+            self._sync_estimated()
         elif event == "error":
             self._fail("stream_failed")
         # EOF is delivery completion, not acoustic completion or a queue-advance signal.
@@ -434,6 +622,7 @@ class PlaybackSession:
         if self.closed:
             return
         if not self.owned:
+            self._cancel_estimated("lost_owner")
             self.changed()
             return
         if new is None or new.state in {"unavailable", "unknown"}:
@@ -445,12 +634,21 @@ class PlaybackSession:
         if not self._issued:
             self.changed()
             return
+        if self.compatible and self._ended_round == self.round_id:
+            return
         actual = new.attributes.get("media_content_id")
         if isinstance(actual, str) and identity == "foreign":
             retired = any(_identity_url(actual) == _identity_url(url) for url in self._retired)
             loading_previous = (
                 not self.started
-                and self.phase == "loading"
+                and (
+                    self.phase == "loading"
+                    or (
+                        self.compatible
+                        and self._before_state is not None
+                        and new.last_updated <= self._before_state.last_updated
+                    )
+                )
                 and self._before_command is not None
                 and _identity_url(actual) == _identity_url(self._before_command)
             )
@@ -459,7 +657,7 @@ class PlaybackSession:
                 return
         source = self._source_of(new)
         if identity == "foreign" or (
-            self.started
+            (self.started or (self.compatible and self._command_return is not None))
             and identity == "unknown"
             and self._source is not None
             and source != self._source
@@ -468,6 +666,11 @@ class PlaybackSession:
             self.detach("external_media")
             return
         self.identity = identity
+        if self.compatible and identity == "unknown" and self._before_state is not None:
+            # A repeated vendor ID is not a round token. A cached pre-command
+            # snapshot cannot confirm the new load merely because first_byte arrived.
+            if new.last_updated <= self._before_state.last_updated:
+                return
         evidence = identity == "matched" or (identity == "unknown" and self._audio)
         if not evidence:
             self.reason = "awaiting_media_identity"
@@ -476,7 +679,17 @@ class PlaybackSession:
         was_playing = old is not None and old.state == "playing"
         old_position = self.timeline.position()
         duration = self.timeline.duration
-        if self.timeline.observe(self.round_id, new.state, new.attributes):
+        timeline_state = new.state
+        if self.compatible and self.intent == "pause":
+            timeline_state = "paused"
+        elif (
+            self.compatible
+            and self.intent == "play"
+            and new.state == "paused"
+            and (self.confirmation_stage != "confirmed" or self._local_resume)
+        ):
+            timeline_state = "playing"
+        if self.timeline.observe(self.round_id, timeline_state, new.attributes):
             self._raw_samples += 1
         if self.intent == "seek" and self.timeline.seek_target is None:
             self.intent = self._seek_return_intent
@@ -489,8 +702,16 @@ class PlaybackSession:
             )
             if confirmed:
                 previously_confirmed = self.started
+                late = self.confirmation_stage == "assumed"
+                self.confirmation_stage = "confirmed"
+                self._local_resume = False
+                self._estimate_buffering = False
+                self._cancel_estimated("confirmed")
+                self.estimated_end_blocked_reason = "confirmed"
                 self.started = True
                 self.phase, self.reason = "playing", "output_reported_playing"
+                if late:
+                    self.reason = "late_confirmed"
                 self.confirmation = (
                     "delivery"
                     if self._audio
@@ -501,9 +722,16 @@ class PlaybackSession:
                 self._ready.set()
                 if not previously_confirmed:
                     self.record("confirmed", self.confirmation)
+                    if late:
+                        self.record("late_confirmed", self.confirmation)
             else:
                 self.phase, self.reason = "loading", "reported_without_delivery"
-        elif new.state == self.profile.end_state and self.started and was_playing:
+        elif (
+            new.state == self.profile.end_state
+            and self.started
+            and was_playing
+            and not (self.compatible and self._local_resume)
+        ):
             native_end = (
                 self.timeline.source == "native"
                 and old_position is not None
@@ -516,17 +744,15 @@ class PlaybackSession:
                 and self._ended_round != self.round_id
                 and ((identity == "matched" and native_end) or weak_end)
             ):
-                self._ended_round = self.round_id
-                self.phase, self.reason, self.started = "idle", "natural_end", False
-                self.record("end", "natural_end")
-                generation = self.generation
-                self._advance = self.hass.async_create_background_task(
-                    self._auto_advance(generation), "FeiNiu natural queue advance"
-                )
+                self._finish_round_once("natural_end")
             elif self.intent not in {"pause", "stop", "seek"}:
                 self.detach("end_not_confirmed")
                 return
-        elif new.state == "paused" and (self.started or self.intent == "pause"):
+        elif (
+            new.state == "paused"
+            and (self.started or self.intent == "pause")
+            and not (self.compatible and self._local_resume and self.intent == "play")
+        ):
             self.phase, self.reason = "paused", "output_paused"
         elif new.state == "buffering" and self.started:
             self.phase, self.reason = "buffering", "output_buffering"
@@ -534,9 +760,22 @@ class PlaybackSession:
             new.state in {"idle", "off"}
             and self.started
             and self.intent not in {"pause", "stop", "seek"}
+            and not (self.compatible and self._local_resume)
         ):
             self.detach("output_stopped")
             return
+        if self.compatible and self.confirmation_stage != "confirmed":
+            if new.state == "buffering":
+                self._estimate_buffering = True
+                self.timeline.freeze_estimate()
+                self.timeline.freeze("output_buffering")
+                self.phase, self.reason = "buffering", "output_buffering"
+            elif new.state == "playing" and self._estimate_buffering:
+                self._estimate_buffering = False
+                self.timeline.resume_estimate()
+            self._sync_estimated()
+            if self.confirmation_stage == "assumed" and self.intent == "play":
+                self.timeline.show_estimate(moving=not self._estimate_buffering)
         self.changed()
 
     async def _auto_advance(self, generation: int) -> None:
@@ -579,6 +818,8 @@ class PlaybackSession:
 
     async def pause(self) -> None:
         generation = self._invalidate("pause")
+        if self.compatible:
+            self.timeline.freeze_estimate()
         self.timeline.freeze("pause_requested")
         self.reason = "pause_requested"
         if self.owned and self._controlled:
@@ -595,6 +836,8 @@ class PlaybackSession:
                 self._controlled = False
                 self.cancel_streams()
                 self.leases.release(self.output.binding.key, self)
+            elif self.compatible:
+                self.phase, self.reason = "paused", "pause_requested"
         else:
             self.phase, self.reason = "idle", "loading_cancelled"
             self.leases.release(self.output.binding.key, self)
@@ -621,6 +864,10 @@ class PlaybackSession:
             self.changed()
 
     async def seek(self, position: float) -> None:
+        if self.compatible and self.confirmation_stage != "confirmed":
+            raise ServiceValidationError(
+                translation_domain="feiniu_music", translation_key="playback_unconfirmed"
+            )
         if not self.owned or not self.started or not self.output.features & Feature.SEEK:
             raise ServiceValidationError("Output cannot seek this playback")
         self._seek_return_intent = (
@@ -688,6 +935,11 @@ class PlaybackSession:
             if self.identity in {"matched", "foreign", "unknown"}
             else "unknown",
             "confirmation": self.confirmation,
+            "confirmation_stage": self.confirmation_stage,
+            "effective_feedback_mode": self.feedback_mode,
+            "effective_unconfirmed_end": self.unconfirmed_end,
+            "estimated_end_armed": self._estimated_end is not None,
+            "estimated_end_blocked_reason": self.estimated_end_blocked_reason,
             "position_source": self.timeline.source,
             "timeline_reason": self.timeline.reason,
             "output_state": safe_state(self.output.state.state if self.output.state else None),

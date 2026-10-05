@@ -213,10 +213,15 @@ const words = {
     volume: 'Volume', seek: 'Playback position', clear: 'Clear queue', more: 'More', back: 'Back', pagePrevious:'Previous page', pageNext:'Next page',
     remove: 'Remove', up: 'Move earlier', down: 'Move later', jump: 'Play this item', add: 'Add to queue', playnext: 'Play next',
     search: 'Search music', searchGo: 'Search', loading: 'Loading…', compactLoading:'Loading', noLyrics: 'No lyrics for this track.', lyricError: 'Lyrics unavailable. Playback is unaffected.',
-    settings: 'Playback & lyrics', offset: 'Lyrics offset (seconds)', save: 'Save', saved: 'Saved', close: 'Close',
-    confirmation: 'Start confirmation', delivery: 'Audio delivery or fresh device progress', reported: 'Trust the output’s playing report',
-    playOnce: 'Send one extra Play after loading', end: 'Output reports completion as', weak: 'Allow completion without reliable progress',
-    warning: 'PAUSED/OFF or weak completion can mistake a device-side pause/stop for completion. Keep defaults unless you have tested this output.',
+    settings: 'Playback feedback and continuation', offset: 'Lyrics offset (seconds)', save: 'Save', saved: 'Saved', close: 'Close',
+    confirmation: 'Startup confirmation', delivery: 'Playing report plus audio delivery or valid progress (default)', reported: 'Use the output’s playing report',
+    confirmationHelp:'Both choices require current-media association and a playing report. The default also requires delivery for this round or at least two valid fresh position samples. Software feedback does not prove audible playback.',
+    feedbackMode:'Playback feedback mode', standardMode:'Standard (default)', compatibilityMode:'Compatibility: keep the session when unconfirmed',
+    feedbackHelp:'Standard: on confirmation timeout, end the round and revoke its stream; buffered audio may continue. Compatibility: retain the round after a successful request even without confirmation. Audible playback is not verified. These two strategy settings take effect on the next track.',
+    estimateEnd:'Advance by estimated duration when playback is unconfirmed', estimateHelp:'Off by default. Requires successful loading, first-byte delivery and a valid duration. The clock starts at the later of command return and delivery, then waits duration + 5 seconds. Delayed starts, buffering, inaccurate durations or unreported external pauses may cause early or late changes.',
+    awaitingFeedback:'Waiting for playback feedback', assumedFeedback:'Playback unconfirmed · session retained', pauseRequested:'Pause requested · device state unconfirmed', resumeRequested:'Resume requested · device state unconfirmed', late_confirmed:'Playback feedback received for this round', estimated_end:'Advanced using estimated duration', durationUnknown:'No valid duration is available for estimated continuation', seekUnconfirmed:'Playback is unconfirmed, so seeking is not available reliably yet',
+    playOnce: 'Send one extra Play after loading', end: 'Candidate end state', weak: 'Allow end-state transition continuation after confirmed playback',
+    warning: 'Extra Play is sent at most once while unconfirmed, only with matched media and PLAY support. End-state continuation requires confirmed playback transitioning from playing; default checks also require matching media and near-end native progress. Weaker checks may mistake manual pause/stop for completion; they do not enable estimated continuation.',
     diagnostic: 'Playback diagnostics', error: 'The operation failed. Refresh or retry.', conflict: 'The queue changed. It has been refreshed.',
     PermissionDeniedError:'This music account can no longer access the track.', NotFoundError:'The track is unavailable.', AuthenticationError:'Update this music account’s password in integration settings.', NetworkError:'The music service is temporarily unreachable.', ProtocolError:'The music service returned an unexpected response.',
     offline: 'Output offline. The queue is kept.', idle: 'Ready', restored: 'Queue restored · press Play to continue',
@@ -231,10 +236,15 @@ const words = {
     volume: '音量', seek: '播放进度', clear: '清空队列', more: '更多', back: '返回', pagePrevious:'上一页', pageNext:'下一页',
     remove: '移除', up: '向前移动', down: '向后移动', jump: '播放这一项', add: '加入队列', playnext: '下一首播放',
     search: '搜索音乐', searchGo: '搜索', loading: '正在加载…', compactLoading:'加载中', noLyrics: '这首歌暂无歌词。', lyricError: '歌词暂时不可用，不影响播放。',
-    settings: '播放与歌词设置', offset: '歌词偏移（秒）', save: '保存', saved: '已保存', close: '关闭',
-    confirmation: '起播确认', delivery: '收到音频或新的设备进度', reported: '相信输出报告的播放状态',
-    playOnce: '加载后补发一次播放动作', end: '设备结束时报告的状态', weak: '允许无可靠进度时按结束状态续播',
-    warning: '将暂停／关机或弱反馈作为结束，可能误判音箱上的暂停、停止操作。未验证设备时请保留默认设置。',
+    settings: '播放反馈与续播', offset: '歌词偏移（秒）', save: '保存', saved: '已保存', close: '关闭',
+    confirmation: '起播确认', delivery: '播放中反馈，并有音频传输或有效进度（默认）', reported: '使用输出的播放中反馈',
+    confirmationHelp:'两种方式都要求当前媒体关联检查和输出报告“播放中”。默认方式还要求本轮音频传输或至少两个有效的新进度样本。这些软件反馈不证明音箱已经实际发声。',
+    feedbackMode:'播放反馈模式', standardMode:'标准（默认）', compatibilityMode:'兼容：未确认时保持会话',
+    feedbackHelp:'标准：确认超时后结束本轮并撤销音频流，音箱已缓存的音频可能继续播放。兼容：播放请求成功返回但反馈延迟或缺失时保留会话，不代表已确认发声。模式和估算续播设置在下一首生效。',
+    estimateEnd:'未确认时按估算时长自动续播', estimateHelp:'默认关闭。需要加载成功、本轮音频开始交付和有效时长。以请求返回和首次音频交付中较晚的时间起算，在曲目时长之后额外等待 5 秒。启动延迟、缓冲、时长误差或未上报的外部暂停仍可能导致提前或延迟切歌。',
+    awaitingFeedback:'正在等待播放反馈', assumedFeedback:'播放未确认 · 会话已保留', pauseRequested:'已请求暂停 · 设备状态未确认', resumeRequested:'已请求恢复 · 设备状态未确认', late_confirmed:'已收到本轮播放反馈', estimated_end:'按估算时长续播', durationUnknown:'缺少有效时长，无法自动估算续播', seekUnconfirmed:'播放尚未确认，暂不能可靠跳转进度',
+    playOnce: '加载后补发一次播放动作', end: '播放结束候选状态', weak: '已确认播放后，允许按结束状态转换续播',
+    warning: '补发播放仅在本轮尚未确认、媒体可识别且支持播放动作时执行一次，不会循环重试。结束判断仅适用于已确认播放从“播放中”转为候选状态；默认还检查当前媒体及接近曲尾的原生进度。放宽判断可能误判手动暂停或停止，不会启用未确认播放的估算续播。',
     diagnostic: '播放诊断', error: '操作未完成，请刷新或重试。', conflict: '队列已经变化，已为你刷新。',
     PermissionDeniedError:'当前音乐账号已无权访问这首歌。', NotFoundError:'歌曲文件不可用。', AuthenticationError:'请在集成设置中更新音乐账号密码。', NetworkError:'暂时无法连接音乐服务，可稍后重试。', ProtocolError:'音乐服务返回了非预期响应。',
     offline: '输出离线，队列已保留。', idle: '准备就绪', restored: '队列已恢复 · 点击播放继续',
@@ -552,7 +562,7 @@ export class FeiNiuMusicCard extends Base {
     let message=offline ? this.t('offline') : this.t(a.session_reason in words.en ? a.session_reason : (a.session_phase || 'idle'));
     if(a.position_source==='estimated')message+=` · ${this.t('estimated')}`;
     this.$('output').classList.toggle('offline',offline);
-    this._text('status',offline||['failed','detached'].includes(a.session_phase)?message:'');
+    this._text('status',offline||['failed','detached'].includes(a.session_phase)?message:this._feedbackMessage());
     const playing=state?.state==='playing', flags=a.supported_features || 0;
     this._buttons.play.firstChild.setAttribute('icon',`mdi:${playing?'pause':'play'}`);
     this._buttons.play.title=this.t(playing?'pause':'play');this._buttons.play.setAttribute('aria-label',this._buttons.play.title);
@@ -564,7 +574,9 @@ export class FeiNiuMusicCard extends Base {
       b.firstChild.setAttribute('icon',`mdi:${mode.icon}`);
     }
     this.shadowRoot.querySelector('.dock-stop').disabled=this._buttons.stop.disabled||offline;
-    this.$('seek').disabled=offline || !(flags&2) || !a.queue_active || !a.media_duration;
+    const unconfirmed=a.effective_feedback_mode==='compatibility'&&a.confirmation_stage!=='confirmed';
+    this.$('seek').disabled=offline || !(flags&2) || !a.queue_active || !a.media_duration || unconfirmed;
+    this.$('seek').title=unconfirmed?this.t('seekUnconfirmed'):this.t('seek');
     this.$('seek').max=String(a.media_duration || 100);this._text('duration',timeLabel(a.media_duration));
     this.$('volume').disabled=offline || !(flags&4);this.$('volume-toggle').disabled=this.$('volume').disabled;
     if(this.shadowRoot.activeElement!==this.$('volume')){this.$('volume').value=String(a.volume_level||0);this._text('volume-value',`${Math.round((a.volume_level||0)*100)}%`);}
@@ -634,7 +646,8 @@ export class FeiNiuMusicCard extends Base {
     for(const [i,b] of [...this.$('lyric-lines').querySelectorAll('.lyric-seek')].entries()){
       const target=lyricSeekPosition(this._lyrics[i]?.time_ms,offset,this._attrs.media_duration);
       b.disabled=this.$('seek').disabled||!['playing','paused'].includes(this._state?.state)||!!this._lyricSeeking||target===null;
-      b.querySelector('span').textContent=timeLabel(target);b.title=b.disabled?this.t('lyricSeekUnavailable'):`${this.t('lyricSeek')} ${timeLabel(target)}`;b.setAttribute('aria-label',b.title);
+      const unconfirmed=this._attrs.effective_feedback_mode==='compatibility'&&this._attrs.confirmation_stage!=='confirmed';
+      b.querySelector('span').textContent=timeLabel(target);b.title=b.disabled?this.t(unconfirmed?'seekUnconfirmed':'lyricSeekUnavailable'):`${this.t('lyricSeek')} ${timeLabel(target)}`;b.setAttribute('aria-label',b.title);
     }
   }
   async _adjustLyricOffset(step){
@@ -715,7 +728,7 @@ export class FeiNiuMusicCard extends Base {
     const shell=this.shadowRoot.querySelector('.shell');shell.classList.toggle('compact-rich',rich);
     const loading=phase==='loading'&&!(show&&this._lyricStatus==='loading');
     const caption=unavailable?'compactOffline':!hasTrack?'compactEmpty':phase==='detached'?'compactDetached':phase==='failed'?'compactFailed':loading?'compactLoading':phase!=='loading'&&show&&this._lyrics.length&&this._position()==null?'compactWaiting':'';
-    const status=this.$('compact-status'),text=home&&caption?this.t(caption):'';
+    const status=this.$('compact-status'),text=home?(this._feedbackMessage()||(caption?this.t(caption):'')):'';
     status.hidden=!text;this._text('compact-status',text);status.title=text;status.classList.toggle('loading',caption==='compactLoading');
   }
   _empty(text){const p=document.createElement('div');p.className='empty';p.textContent=text;return p;}
@@ -806,6 +819,15 @@ export class FeiNiuMusicCard extends Base {
     try{const result=await this._browseRequest('media_player/browse_media',{media_content_id:item.media_content_id,media_content_type:item.media_content_type},controller);if(this._connected&&life===this._browseLife){this._playlistRows=result.children||[];this._renderNav();}}
     catch{/* Optional sidebar shortcuts. Opening Playlists retains the normal error/retry UI. */}
     finally{if(life===this._browseLife){this._playlistPending=false;this._playlistController=null;}}
+  }
+  _feedbackMessage(){
+    const a=this._attrs;
+    if(a.effective_feedback_mode!=='compatibility'||!['loading','playing','paused','buffering'].includes(a.session_phase))return '';
+    const key=a.session_reason==='pause_requested'?'pauseRequested':a.session_reason==='resume_requested'?'resumeRequested':a.confirmation_stage==='assumed'?'assumedFeedback':a.confirmation_stage==='awaiting'?'awaitingFeedback':a.session_reason==='late_confirmed'?'late_confirmed':'';
+    const parts=key?[this.t(key)]:[];
+    if(a.position_source==='estimated')parts.push(this.t('estimated'));
+    if(a.estimated_end_blocked_reason==='duration_unknown')parts.push(this.t('durationUnknown'));
+    return parts.join(' · ');
   }
   _cancelBrowse(){
     this._browseLife++;this._browseEpoch++;this._browseController?.abort();this._playlistController?.abort();
@@ -903,16 +925,21 @@ export class FeiNiuMusicCard extends Base {
   async _select(item,enqueue){const ok=await this._service('play_media',{media_content_type:item.media_content_type,media_content_id:item.media_content_id,enqueue});if(ok)this._refreshQueue();return ok;}
   _preferences(){
     const box=this.$('preferences');if(!box.hidden){this._closeDialog('preferences');return;}this._dialogOpener=this.shadowRoot.activeElement;box.hidden=false;
-    const fields=this.$('preference-fields');fields.replaceChildren();const profile=this._attrs.playback_profile||this._queue?.diagnostics?.profile||{confirmation:'delivery',play_once:false,end_state:'idle',weak_end:false};
+    const fields=this.$('preference-fields');fields.replaceChildren();const profile={feedback_mode:'standard',unconfirmed_end:'manual',confirmation:'delivery',play_once:false,end_state:'idle',weak_end:false,...(this._attrs.playback_profile||this._queue?.diagnostics?.profile||{})};
     const label=(key,input)=>{const l=document.createElement('label');l.textContent=this.t(key);l.append(input);fields.append(l);};
     const offset=document.createElement('input');offset.type='number';offset.min='-30';offset.max='30';offset.step='.1';offset.id='offset';offset.value=String(this._attrs.lyric_offset||0);label('offset',offset);
     const select=(key,id,choices,value)=>{const input=document.createElement('select');input.id=id;for(const [v,t]of choices){const o=document.createElement('option');o.value=v;o.textContent=t;input.append(o);}input.value=value;label(key,input);};
+    const help=(key)=>{const p=document.createElement('small');p.textContent=this.t(key);fields.append(p);return p;};
+    select('feedbackMode','feedback-mode',[['standard',this.t('standardMode')],['compatibility',this.t('compatibilityMode')]],profile.feedback_mode);help('feedbackHelp');
+    const estimate=document.createElement('input');estimate.id='estimated-end';estimate.type='checkbox';estimate.checked=profile.unconfirmed_end==='estimated_duration';label('estimateEnd',estimate);const estimateHelp=help('estimateHelp');
+    const showEstimate=()=>{const hidden=this.$('feedback-mode').value!=='compatibility';estimate.parentElement.hidden=hidden;estimateHelp.hidden=hidden;};this.$('feedback-mode').onchange=showEstimate;showEstimate();
     select('confirmation','confirmation',[['delivery',this.t('delivery')],['reported',this.t('reported')]],profile.confirmation);
+    help('confirmationHelp');
     select('end','end-state',[['idle','IDLE'],['paused','PAUSED'],['off','OFF']],profile.end_state);
     for(const [key,id,value] of [['playOnce','play-once',profile.play_once],['weak','weak-end',profile.weak_end]]){const input=document.createElement('input');input.type='checkbox';input.id=id;input.checked=value;label(key,input);}
-    for(const id of ['confirmation','end-state','play-once','weak-end'])this.$(id).disabled=!this._hass.user?.is_admin;
+    for(const id of ['feedback-mode','estimated-end','confirmation','end-state','play-once','weak-end'])this.$(id).disabled=!this._hass.user?.is_admin;
     this.$('save-preferences').replaceChildren(this._button('save',async()=>{try{
-      const edited={confirmation:this.$('confirmation').value,play_once:this.$('play-once').checked,end_state:this.$('end-state').value,weak_end:this.$('weak-end').checked};
+      const edited={feedback_mode:this.$('feedback-mode').value,unconfirmed_end:this.$('feedback-mode').value==='compatibility'&&estimate.checked?'estimated_duration':'manual',confirmation:this.$('confirmation').value,play_once:this.$('play-once').checked,end_state:this.$('end-state').value,weak_end:this.$('weak-end').checked};
       const changes=Object.fromEntries(Object.entries(edited).filter(([key,value])=>value!==profile[key]));
       await this._call('feiniu_music/preferences',{lyric_offset:Number(this.$('offset').value),...(this._hass.user?.is_admin&&Object.keys(changes).length?{profile:changes}:{})});
       this.$('error').style.color='var(--secondary-text-color,#5d707b)';this.$('error').setAttribute('role','status');this._text('error',this.t('saved'));this._closeDialog('preferences');this._refreshQueue();}catch(err){this._error(err);}}));this.$('settings-close').firstChild.focus();

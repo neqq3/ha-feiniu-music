@@ -231,6 +231,7 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
         super().__init__()
         self._output_key: str | None = None
         self._profile_defaults: dict[str, Any] = {}
+        self._profile_pending: dict[str, Any] = {}
 
     def _manager(self) -> AccountPlayers | None:
         manager = self.hass.data.get(DOMAIN, {}).get("players", {}).get(self.config_entry.entry_id)
@@ -303,6 +304,14 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
             try:
                 # Preserve fields changed elsewhere while this form was open.
                 changes = {k: v for k, v in user_input.items() if v != self._profile_defaults[k]}
+                if (
+                    user_input.get("feedback_mode", self._profile_defaults["feedback_mode"])
+                    == "compatibility"
+                ):
+                    self._profile_pending = changes
+                    return await self.async_step_unconfirmed_end()
+                if changes.get("feedback_mode") == "standard":
+                    changes["unconfirmed_end"] = "manual"
                 player.set_playback_profile(changes)
                 await manager.storage.flush()
                 return self.async_create_entry(title="", data=dict(self.config_entry.options))
@@ -317,6 +326,15 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        "feedback_mode", default=defaults["feedback_mode"]
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["standard", "compatibility"],
+                            translation_key="feedback_mode",
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Required("confirmation", default=defaults["confirmation"]): SelectSelector(
                         SelectSelectorConfig(
                             options=["delivery", "reported"],
@@ -333,6 +351,45 @@ class FeiNiuOptionsFlow(config_entries.OptionsFlow):
                     ),
                     vol.Required("play_once", default=defaults["play_once"]): BooleanSelector(),
                     vol.Required("weak_end", default=defaults["weak_end"]): BooleanSelector(),
+                }
+            ),
+        )
+
+    async def async_step_unconfirmed_end(self, user_input=None) -> ConfigFlowResult:
+        """Only offered after choosing compatibility; save both steps together."""
+        manager = self._manager()
+        if manager is None:
+            return self.async_abort(reason="not_loaded")
+        player = manager.entities.get(self._output_key or "")
+        if player is None or player.session is None or player.session.closed:
+            return self.async_abort(reason="output_removed")
+        if manager.storage.corrupt:
+            return self.async_abort(reason="storage_unavailable")
+        errors = {}
+        if user_input is not None:
+            try:
+                player.set_playback_profile(
+                    {
+                        **self._profile_pending,
+                        "feedback_mode": "compatibility",
+                        "unconfirmed_end": "estimated_duration"
+                        if user_input["estimated"]
+                        else "manual",
+                    }
+                )
+                await manager.storage.flush()
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
+            except ValueError:
+                errors["base"] = "invalid_profile"
+        return self.async_show_form(
+            step_id="unconfirmed_end",
+            errors=errors,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "estimated",
+                        default=self._profile_defaults["unconfirmed_end"] == "estimated_duration",
+                    ): BooleanSelector(),
                 }
             ),
         )

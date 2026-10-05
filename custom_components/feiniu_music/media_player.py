@@ -168,9 +168,31 @@ class FeiNiuPlayer(MediaPlayerEntity):
 
     @property
     def supported_features(self) -> Feature:
-        return _BASE_FEATURES | (
+        features = _BASE_FEATURES | (
             self.output.features
             & (Feature.PAUSE | Feature.SEEK | Feature.VOLUME_SET | Feature.VOLUME_MUTE)
+        )
+        # Preserve the standard mode's feature projection. Compatibility adds a
+        # truthful seek gate while retaining an unconfirmed playback session.
+        if (
+            self.session
+            and self.session.compatible
+            and self.session.confirmation_stage != "confirmed"
+        ):
+            features &= ~Feature.SEEK
+        return features
+
+    @property
+    def assumed_state(self) -> bool:
+        session = self.session
+        return bool(
+            session
+            and session.compatible
+            and session.owned
+            and (
+                session.confirmation_stage == "assumed"
+                or session.reason in {"pause_requested", "resume_requested"}
+            )
         )
 
     @property
@@ -194,14 +216,14 @@ class FeiNiuPlayer(MediaPlayerEntity):
 
     @property
     def media_position(self) -> int | None:
-        if self.session and self.session.started:
+        if self.session and self.session.position_visible:
             value = self.session.timeline.ha_anchor()[0]
             return int(value) if value is not None else None
         return None
 
     @property
     def media_position_updated_at(self):
-        if self.session and self.session.started:
+        if self.session and self.session.position_visible:
             return self.session.timeline.ha_anchor()[1]
         return None
 
@@ -220,14 +242,20 @@ class FeiNiuPlayer(MediaPlayerEntity):
             "queue_position": queue.position + 1,
             "queue_revision": queue.revision,
             "queue_item_id": queue.current_id,
-            "queue_active": bool(session and session.owned and session.started),
+            "queue_active": bool(session and session.owned and session.position_visible),
             "session_phase": session.phase if session else "idle",
             "session_reason": session.reason if session else "not_loaded",
             "last_queue_error": session.reason if session and session.phase == "failed" else None,
             "playback_round": session.round_id if session else 0,
             "confirmation": session.confirmation if session else "unconfirmed",
+            "confirmation_stage": session.confirmation_stage if session else None,
+            "effective_feedback_mode": session.feedback_mode if session else "standard",
+            "effective_unconfirmed_end": session.unconfirmed_end if session else "manual",
+            "estimated_end_blocked_reason": session.estimated_end_blocked_reason
+            if session
+            else None,
             "position_source": session.timeline.source
-            if session and session.started
+            if session and session.position_visible
             else "unavailable",
             "lyric_offset": self.saved.lyric_offset,
             "playback_profile": asdict(session.profile if session else self.saved.profile),
@@ -373,7 +401,7 @@ class FeiNiuPlayer(MediaPlayerEntity):
             self._changed()
         elif action == "remove" and item_id is not None:
             current = item_id == session.queue.current_id
-            playing = session.owned and session.started and session.phase == "playing"
+            playing = session.owned and session.position_visible and session.phase == "playing"
             session.queue.remove(item_id, revision)
             session.record("queue", "remove")
             if current:

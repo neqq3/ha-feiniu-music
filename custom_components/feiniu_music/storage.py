@@ -58,6 +58,8 @@ class SavedSession:
             "play_once",
             "end_state",
             "weak_end",
+            "feedback_mode",
+            "unconfirmed_end",
         }:
             raise QueueError("Invalid saved output profile")
         if data["position"] is not None and number(data["position"]) is None:
@@ -69,39 +71,68 @@ class SavedSession:
         return restored
 
 
-class QueueStorage:
-    """One account's output records; deselection retains data, account removal deletes it."""
+def _restore_outputs(data: Any, entry_id: str) -> dict[str, SavedSession]:
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"outputs"}
+        or not isinstance(data["outputs"], dict)
+    ):
+        raise QueueError("Invalid queue storage")
+    restored = {}
+    for key, value in data["outputs"].items():
+        item = SavedSession.restore(value, entry_id)
+        if item.binding.key != key:
+            raise QueueError("Queue output identity mismatch")
+        restored[key] = item
+    return restored
 
+
+class _QueueStore(Store[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         self.entry_id = entry_id
-        self.store: Store[dict[str, Any]] = Store(
+        super().__init__(
             hass,
-            1,
+            2,
             f"{DOMAIN}.queues.{entry_id}",
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
         )
+
+    async def _async_migrate_func(self, old_major_version, old_minor_version, old_data):
+        """HA saves only after every record validates; never partially migrate a file."""
+        if old_major_version not in {1, 2}:
+            raise QueueError("Unsupported queue storage version")
+        data = deepcopy(old_data)
+        if old_major_version == 1:
+            if not isinstance(data, dict) or not isinstance(data.get("outputs"), dict):
+                raise QueueError("Invalid queue storage")
+            for value in data["outputs"].values():
+                if not isinstance(value, dict) or not isinstance(value.get("profile"), dict):
+                    raise QueueError("Invalid saved output profile")
+                profile = value["profile"]
+                if set(profile) != {"confirmation", "play_once", "end_state", "weak_end"}:
+                    raise QueueError("Invalid saved output profile")
+                profile.update(feedback_mode="standard", unconfirmed_end="manual")
+        _restore_outputs(data, self.entry_id)
+        return data
+
+
+class QueueStorage:
+    """One account's output records; deselection retains data, account removal deletes it."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        self.entry_id = entry_id
+        self.store = _QueueStore(hass, entry_id)
         self.records: dict[str, dict[str, Any]] = {}
         self.corrupt = False
 
     async def load(self) -> dict[str, SavedSession]:
-        data = await self.store.async_load()
-        if data is None:
-            return {}
         try:
-            if (
-                not isinstance(data, dict)
-                or set(data) != {"outputs"}
-                or not isinstance(data["outputs"], dict)
-            ):
-                raise QueueError("Invalid queue storage")
-            restored = {}
-            for key, value in data["outputs"].items():
-                item = SavedSession.restore(value, self.entry_id)
-                if item.binding.key != key:
-                    raise QueueError("Queue output identity mismatch")
-                restored[key] = item
+            data = await self.store.async_load()
+            if data is None:
+                return {}
+            restored = _restore_outputs(data, self.entry_id)
         except (ValueError, TypeError, KeyError):
             # Preserve a syntactically readable but semantically corrupt file. A repair
             # action must explicitly clear/restore it; never silently overwrite it.
