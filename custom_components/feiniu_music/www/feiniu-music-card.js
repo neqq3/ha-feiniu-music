@@ -369,7 +369,8 @@ export class FeiNiuMusicCard extends Base {
   }
   get _state() { return this._hass?.states[this._config?.entity]; }
   get _compactHome(){return this._config?.display_mode==='compact'&&!this._expanded;}
-  get _compactRich(){return this._config?.compact_view==='lyrics'||(this._config?.compact_view==='auto'&&!!(this._lyrics?.length||this._lyricText?.trim()));}
+  get _hasCurrentTrack(){const a=this._attrs;return !!a.queue_item_id&&typeof a.media_title==='string'&&!!a.media_title.trim();}
+  get _compactRich(){return this._config?.compact_view==='lyrics'||(this._config?.compact_view==='auto'&&this._hasCurrentTrack&&!!(this._lyrics?.length||this._lyricText?.trim()));}
   get _lyricsVisible(){return this._compactHome?!!this._compactShowLyrics:this._tab==='lyrics';}
   get _attrs() { return this._state?.attributes || {}; }
   t(key) { return (words[this._hass?.language?.startsWith('zh') ? 'zh' : 'en'][key] || words.en[key] || key); }
@@ -586,7 +587,9 @@ export class FeiNiuMusicCard extends Base {
     if(anchorKey!==this._anchorKey){this._anchorKey=anchorKey;this._anchor={value:positionAt(a,state?.state,Date.now()),at:performance.now(),moving:playing};}
     const key=`${this._config.entity}/${a.queue_revision}/${JSON.stringify(a.playback_profile)}`;
     if(key!==this._key){this._key=key;this._refreshQueue();}
-    const lyricKey=`${this._config.entity}/${a.playback_round}/${a.queue_item_id}`;
+    // Restored queues retain an occurrence ID before media metadata is resolved.
+    // Metadata arriving/clearing must refresh lyrics even within the same round.
+    const lyricKey=`${this._config.entity}/${a.playback_round}/${a.queue_item_id}/${this._hasCurrentTrack}`;
     if(lyricKey!==this._lyricKey){this._lyricKey=lyricKey;this._refreshLyrics();}
     if(!this._compactHome&&this._tab==='browse'&&!this._browseResult&&!this._browseStarted&&!this._browseError)this._browse();
     this._syncCompact();this._renderLyricTools();this._animate();
@@ -699,15 +702,16 @@ export class FeiNiuMusicCard extends Base {
     }catch(err){if(epoch===this._queueEpoch)this._error(err);}finally{this._queuePending=false;if(this._queueAgain){this._queueAgain=false;setTimeout(()=>this._refreshQueue(),150);}}
   }
   async _refreshLyrics(){
-    if(!this._hass||!this._connected||document.hidden||(this._compactHome&&!['lyrics','auto'].includes(this._config.compact_view)))return;
+    const hasTrack=this._hasCurrentTrack;
+    if(!this._hass||!this._connected||(hasTrack&&(document.hidden||(this._compactHome&&!['lyrics','auto'].includes(this._config.compact_view)))))return;
     const requested=this._lyricKey;
     if(this._lyricResultKey===requested){this._renderLyrics();this._syncCompact();return;}
     if(this._lyricPendingKey===requested)return;
     const epoch=++this._lyricEpoch;this._lyricPendingKey=requested;
-    this._lyricResultKey='';this._lyrics=[];this._lyricText='';this._lyricStatus='loading';this._lastLine=-1;
+    this._lyricResultKey='';this._lyrics=[];this._lyricText='';this._lyricStatus=hasTrack?'loading':'noLyrics';this._lastLine=-1;
     this._clearLyricInteraction();this._renderLyrics();
     this._syncCompact();
-    if(!this._attrs.queue_item_id){this._lyricPendingKey='';this._lyricStatus='noLyrics';this._renderContent();return;}
+    if(!hasTrack){this._lyricPendingKey='';this._lyricResultKey=requested;return;}
     try{const result=await this._call('feiniu_music/lyrics',{round:this._attrs.playback_round||0,item_id:this._attrs.queue_item_id});
       if(!this._connected||epoch!==this._lyricEpoch||requested!==this._lyricKey)return;
       this._lyrics=result.synced_lines||[];this._lyricText=result.text||'';this._lyricStatus=this._lyricText||this._lyrics.length?'':'noLyrics';this._lyricResultKey=requested;
@@ -722,7 +726,7 @@ export class FeiNiuMusicCard extends Base {
     this.shadowRoot.querySelector('.shell').dataset.compactMask=this._config.compact_mask||'soft';
     this._paintCompactBackground(this._attrs.entity_picture||this._attrs.media_image_url);
     const parent=rich?stage:this.$('now-view');if(panel.parentElement!==parent){parent.append(panel);this._queueLyricPaint(true);}
-    const a=this._attrs,phase=a.session_phase,hasTrack=!!a.queue_item_id;
+    const a=this._attrs,phase=a.session_phase,hasTrack=this._hasCurrentTrack;
     const unavailable=!this._state||this._state.state==='unavailable';
     const show=rich;
     if(this._compactShowLyrics!==show){this._compactShowLyrics=show;this._lastLine=-1;this._queueLyricPaint(true);}
