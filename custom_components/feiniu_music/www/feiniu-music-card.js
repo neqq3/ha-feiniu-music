@@ -166,7 +166,7 @@ class FeiNiuCardEditor extends (globalThis.HTMLElement || class {}) {
 }
 if(globalThis.customElements&&!customElements.get('feiniu-music-card-editor'))customElements.define('feiniu-music-card-editor',FeiNiuCardEditor);
 
-export const VERSION = '1.1.0-beta.2';
+export const VERSION = '1.1.0';
 let fontReady;
 function loadCardFont(){
   if(!globalThis.FontFace||fontReady)return;
